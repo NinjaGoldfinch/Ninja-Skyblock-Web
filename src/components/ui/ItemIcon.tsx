@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { rarityColor } from '@/lib/rarity'
 import { useTexture } from '@/hooks/useTextureMap'
-import { getSkullHead, loadSkullHead } from '@/lib/skullRenderer'
+import { getSkullHeadUrl } from '@/lib/skullRenderer'
 import type { TextureData } from '@/types/api'
 
 // --- Lucide fallback icons (used when no texture data available) ---
@@ -61,46 +61,48 @@ function modelSpritePath(itemModel: string): string {
   return `/assets/items/${key}.png`
 }
 
+/** Get the resolved image URL for a texture (used for glint mask) */
+function getTextureUrl(texture: TextureData): string | null {
+  switch (texture.type) {
+    case 'vanilla':
+      return spritePath(texture.material, texture.durability)
+    case 'item_model':
+      return modelSpritePath(texture.item_model)
+    case 'leather':
+      return spritePath(texture.material)
+    case 'skull':
+      return texture.skin_url ? getSkullHeadUrl(texture.skin_url) : null
+    default:
+      return null
+  }
+}
+
 // --- Sub-renderers ---
 
-const SkullIcon = memo(function SkullIcon({ skinUrl, size }: { skinUrl: string; size: number }) {
-  const [src, setSrc] = useState<string | null>(() => getSkullHead(skinUrl))
-
-  useEffect(() => {
-    if (src) return
-    let cancelled = false
-    loadSkullHead(skinUrl).then((dataUrl) => {
-      if (!cancelled) setSrc(dataUrl)
-    }).catch(() => {
-      // Skin load failed — leave as null, fallback will show
-    })
-    return () => { cancelled = true }
-  }, [skinUrl, src])
+const SkullIcon = memo(function SkullIcon({ skinUrl, onError }: { skinUrl: string; onError: () => void }) {
+  const src = getSkullHeadUrl(skinUrl)
 
   if (!src) {
-    return <div className="item-icon item-icon--placeholder" style={{ width: size, height: size }} />
+    return <div className="item-icon item-icon--placeholder" />
   }
 
   return (
     <img
       src={src}
       alt=""
-      width={size}
-      height={size}
-      className="item-icon"
+      className="item-icon item-icon--skull"
       loading="lazy"
+      onError={onError}
     />
   )
 })
 
-function SpriteIcon({ path, size, glowing, onError }: { path: string; size: number; glowing?: boolean; onError: () => void }) {
+function SpriteIcon({ path, onError }: { path: string; onError: () => void }) {
   return (
     <img
       src={path}
       alt=""
-      width={size}
-      height={size}
-      className={`item-icon ${glowing ? 'item-icon--glowing' : ''}`}
+      className="item-icon"
       loading="lazy"
       onError={onError}
     />
@@ -131,62 +133,71 @@ export const ItemIcon = memo(function ItemIcon({
   useEffect(() => { setSpriteFailed(false) }, [itemId, texture])
 
   const useFallback = !texture || spriteFailed
-  const rendered = useFallback ? null : renderTexture(texture, size, () => setSpriteFailed(true))
+  const rendered = useFallback ? null : renderTexture(texture, () => setSpriteFailed(true))
+  const glowing = !useFallback && texture != null && 'glowing' in texture && texture.glowing === true
+  const glintMaskUrl = glowing ? getTextureUrl(texture!) : null
 
-  if (rendered) {
-    return (
-      <div
-        className={`item-icon-container shrink-0 ${className}`}
-        style={{ width: size, height: size }}
-      >
-        {rendered}
-      </div>
-    )
-  }
-
-  return <FallbackIcon itemId={itemId} category={category} tier={tier} size={size} className={className} />
+  // Every variant renders inside the same fixed-size container for consistency
+  return (
+    <div
+      className={`item-icon-container shrink-0 ${className}`}
+      style={{ width: size, height: size }}
+    >
+      {rendered ?? (
+        <FallbackInner itemId={itemId} category={category} tier={tier} size={size} />
+      )}
+      {glintMaskUrl && (
+        <div
+          className="enchant-glint-overlay"
+          style={{
+            WebkitMaskImage: `url(${glintMaskUrl})`,
+            maskImage: `url(${glintMaskUrl})`,
+          }}
+        />
+      )}
+    </div>
+  )
 })
 
-function renderTexture(texture: TextureData, size: number, onSpriteError: () => void): React.ReactNode {
+function renderTexture(texture: TextureData, onSpriteError: () => void): React.ReactNode {
   switch (texture.type) {
     case 'skull': {
       if (!texture.skin_url) return null
-      return <SkullIcon skinUrl={texture.skin_url} size={size} />
+      return <SkullIcon skinUrl={texture.skin_url} onError={onSpriteError} />
     }
     case 'vanilla': {
       const path = spritePath(texture.material, texture.durability)
-      return <SpriteIcon path={path} size={size} glowing={texture.glowing} onError={onSpriteError} />
+      return <SpriteIcon path={path} onError={onSpriteError} />
     }
     case 'item_model': {
       const path = modelSpritePath(texture.item_model)
-      return <SpriteIcon path={path} size={size} onError={onSpriteError} />
+      return <SpriteIcon path={path} onError={onSpriteError} />
     }
     case 'leather': {
       const path = spritePath(texture.material)
-      return <SpriteIcon path={path} size={size} onError={onSpriteError} />
+      return <SpriteIcon path={path} onError={onSpriteError} />
     }
     default:
       return null
   }
 }
 
-function FallbackIcon({ itemId, category, tier, size, className }: ItemIconProps & { size: number }) {
+function FallbackInner({ itemId, category, tier, size }: { itemId?: string; category?: string; tier?: string; size: number }) {
   const color = rarityColor(tier)
   const iconSize = Math.round(size * 0.5)
   const Icon = (category && CATEGORY_ICONS[category.toUpperCase()])
     || (itemId ? guessIconFromId(itemId) : Package)
 
   return (
-    <div
-      className={`shrink-0 rounded-xl flex items-center justify-center ${className}`}
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: color + '12',
-        border: `1px solid ${color}25`,
-      }}
-    >
+    <>
+      <div
+        className="absolute inset-0 rounded-xl"
+        style={{
+          backgroundColor: color + '12',
+          border: `1px solid ${color}25`,
+        }}
+      />
       <Icon size={iconSize} style={{ color }} strokeWidth={1.8} />
-    </div>
+    </>
   )
 }
