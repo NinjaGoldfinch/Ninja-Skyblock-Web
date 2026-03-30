@@ -12,6 +12,7 @@ import type {
   PlayerAuction,
   EndedAuction,
   ItemV2,
+  TextureMap,
   WatchedPlayer,
   GenerateKeyBody,
   GeneratedKey,
@@ -78,6 +79,9 @@ export const getItem = (itemId: string) =>
 
 export const lookupItemName = (name: string) =>
   apiGet<{ skyblock_id: string }>(`/v2/skyblock/items/lookup/${encodeURIComponent(name)}`)
+
+export const getItemTextures = () =>
+  apiGet<TextureMap>('/v2/skyblock/items/textures')
 
 // Collections, Skills, Election
 export const getCollections = () => apiGet<unknown>('/v1/skyblock/collections')

@@ -1,7 +1,15 @@
 import { useState } from 'react'
-import { Shield, Key, Unlock, Sun, Moon, Menu } from 'lucide-react'
+import { Shield, Key, Unlock, Sun, Moon, Menu, Wifi, WifiOff } from 'lucide-react'
 import { getSettings, saveSettings } from '@/lib/settings'
 import { applyTheme } from '@/lib/theme'
+import { useSseLiveStatus } from '@/hooks/useSseLiveStatus'
+
+function formatAgo(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
+}
 
 interface HeaderProps {
   onMenuToggle?: () => void
@@ -10,6 +18,7 @@ interface HeaderProps {
 export function Header({ onMenuToggle }: HeaderProps) {
   const settings = getSettings()
   const [theme, setTheme] = useState(settings.theme)
+  const { sseActive, sseAgo } = useSseLiveStatus('__bazaar_listing__')
 
   const authIcon = {
     apikey: <Key size={14} />,
@@ -45,6 +54,31 @@ export function Header({ onMenuToggle }: HeaderProps) {
       </h1>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* SSE status */}
+        {sseActive ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-full border border-green-500/20 text-green-400 bg-green-500/5">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-50" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-400" />
+            </span>
+            <Wifi size={11} />
+            SSE
+            {sseAgo != null && sseAgo >= 0 && (
+              <span className="text-green-400/60">
+                · {sseAgo > 0 ? formatAgo(sseAgo) : 'now'}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-full border border-muted/20 text-muted/60 bg-muted/5">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-muted/40" />
+            </span>
+            <WifiOff size={11} />
+            SSE
+          </span>
+        )}
+
         <button
           onClick={toggleTheme}
           className="p-2 rounded-lg text-muted hover:text-coin hover:bg-coin/5 transition-all duration-200"
@@ -56,13 +90,6 @@ export function Header({ onMenuToggle }: HeaderProps) {
         <span className="inline-flex items-center gap-1.5 text-xs font-mono text-muted px-2.5 py-1 rounded-lg border border-dungeon/60 bg-dungeon/20">
           {authIcon}
           {authLabel}
-        </span>
-
-        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-50" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400" />
-          </span>
         </span>
       </div>
     </header>

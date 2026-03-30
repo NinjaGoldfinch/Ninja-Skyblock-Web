@@ -65,7 +65,7 @@ export function patchBazaarListing(queryClient: QueryClient, event: BazaarSseEve
   )
 }
 
-// --- Bazaar item cache (BazaarItemPage / BazaarChartPage) ---
+// --- Bazaar item cache (BazaarItemPage) ---
 
 export function patchBazaarItem(queryClient: QueryClient, event: BazaarSseEvent) {
   if (!event.item_id || !event.field) return

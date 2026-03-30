@@ -24,14 +24,10 @@ export function useSseToasts() {
       if (items.length === 0) return
 
       // On a specific item page, filter to that item
-      // Matches /bazaar/ITEM_ID or /bazaar/chart?item=ITEM_ID
       let pageItemId: string | null = null
       const pathMatch = window.location.pathname.match(/^\/bazaar\/([^/]+)$/)
-      if (pathMatch && pathMatch[1] !== 'chart') {
+      if (pathMatch) {
         pageItemId = decodeURIComponent(pathMatch[1]!)
-      } else if (window.location.pathname === '/bazaar/chart') {
-        const params = new URLSearchParams(window.location.search)
-        pageItemId = params.get('item')
       }
 
       if (pageItemId) {

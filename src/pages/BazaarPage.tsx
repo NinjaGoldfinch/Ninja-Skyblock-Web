@@ -1,19 +1,15 @@
-import { useState, useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { getBazaar } from "@/api/endpoints";
 import { PriceDisplay } from "@/components/ui/PriceDisplay";
 import { calcSpread } from "@/lib/format";
 import { ItemIcon } from "@/components/ui/ItemIcon";
-import { LiveDot } from "@/components/ui/LiveDot";
 import { DataCard } from "@/components/ui/DataCard";
 import { CardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { StatusBadge } from "@/components/layout/StatusBadge";
 import { useItemNames } from "@/hooks/useItemNames";
-import { useSseLiveStatus } from "@/hooks/useSseLiveStatus";
-import { useNextUpdate } from "@/hooks/useNextUpdate";
 import type { BazaarProductRaw } from "@/types/api";
 
 type SortOption =
@@ -23,6 +19,15 @@ type SortOption =
   | "buy-low"
   | "spread-high"
   | "name-az";
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "sell-high", label: "Sell Price: High to Low" },
+  { value: "sell-low", label: "Sell Price: Low to High" },
+  { value: "buy-high", label: "Buy Price: High to Low" },
+  { value: "buy-low", label: "Buy Price: Low to High" },
+  { value: "spread-high", label: "Spread %: High to Low" },
+  { value: "name-az", label: "Name: A to Z" },
+];
 
 interface ParsedProduct {
   product_id: string;
@@ -41,12 +46,11 @@ function parseProduct(raw: BazaarProductRaw, getName: (id: string) => string): P
   // V1 API uses Hypixel's internal naming (inverted from user perspective):
   //   sell_summary = sell orders on the book = what user pays to instant-buy (cheapest first)
   //   buy_summary  = buy orders on the book = what user receives to instant-sell (highest first)
-  const buyPrice = raw.sell_summary?.[0]?.pricePerUnit ?? 0;   // cheapest instant-buy price
-  const sellPrice = raw.buy_summary?.[0]?.pricePerUnit ?? 0;   // highest instant-sell price
+  const buyPrice = raw.sell_summary?.[0]?.pricePerUnit ?? 0;
+  const sellPrice = raw.buy_summary?.[0]?.pricePerUnit ?? 0;
 
   const { spread, spreadPercent } = calcSpread(buyPrice, sellPrice);
 
-  // Volume: map to user perspective
   const buyOrders = raw.sell_summary?.reduce((sum, o) => sum + o.orders, 0) ?? 0;
   const buyVolume = raw.sell_summary?.reduce((sum, o) => sum + o.amount, 0) ?? 0;
   const sellOrders = raw.buy_summary?.reduce((sum, o) => sum + o.orders, 0) ?? 0;
@@ -66,25 +70,68 @@ function parseProduct(raw: BazaarProductRaw, getName: (id: string) => string): P
   };
 }
 
-const ITEMS_PER_PAGE = 40;
+function isValidSort(value: string | null): value is SortOption {
+  return value != null && SORT_OPTIONS.some((o) => o.value === value);
+}
+
+const PER_PAGE_OPTIONS = [20, 40, 80, 160, "all"] as const;
+type PerPage = number | "all";
+const DEFAULT_PER_PAGE = 40;
+
+function parsePerPage(value: string | null): PerPage {
+  if (value === "all") return "all";
+  const n = parseInt(value ?? "", 10);
+  return (PER_PAGE_OPTIONS as readonly (number | string)[]).includes(n) ? n : DEFAULT_PER_PAGE;
+}
 
 export default function BazaarPage() {
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>("sell-high");
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
   const { getName } = useItemNames();
 
-  const bazaarQueryKey = ["bazaar"] as const;
-  const { data: resp, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: bazaarQueryKey,
+  // Read state from URL
+  const search = searchParams.get("q") ?? "";
+  const sort: SortOption = isValidSort(searchParams.get("sort")) ? searchParams.get("sort") as SortOption : "sell-high";
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
+  const perPage = parsePerPage(searchParams.get("per_page"));
+
+  // Update URL params (replaces history entry to avoid back-button spam)
+  const setParam = useCallback((updates: Record<string, string | null>) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value == null) {
+          next.delete(key);
+        } else {
+          next.set(key, value);
+        }
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleSearch = useCallback((value: string) => {
+    setParam({ q: value || null, page: null });
+  }, [setParam]);
+
+  const handleSort = useCallback((value: SortOption) => {
+    setParam({ sort: value === "sell-high" ? null : value, page: null });
+  }, [setParam]);
+
+  const setPage = useCallback((p: number) => {
+    setParam({ page: p <= 1 ? null : String(p) });
+  }, [setParam]);
+
+  const handlePerPage = useCallback((value: string) => {
+    const pp = value === "all" ? "all" : value;
+    setParam({ per_page: pp === String(DEFAULT_PER_PAGE) ? null : pp, page: null });
+  }, [setParam]);
+
+  const { data: resp, isLoading, isError, error } = useQuery({
+    queryKey: ["bazaar"],
     queryFn: () => getBazaar(),
   });
 
-  const { sseActive, sseAgo } = useSseLiveStatus("__bazaar_listing__");
-  const nextUpdateIn = useNextUpdate(bazaarQueryKey);
-
   const rawData = resp?.data as unknown as { products?: Record<string, BazaarProductRaw>; count?: number } | undefined;
-  const meta = resp?.meta;
 
   const products = useMemo(() => {
     if (!rawData) return [];
@@ -117,13 +164,13 @@ export default function BazaarPage() {
     return items;
   }, [rawData, search, sort, getName]);
 
-  const totalPages = Math.max(1, Math.ceil(products.length / ITEMS_PER_PAGE));
+  const showAll = perPage === "all";
+  const itemsPerPage = showAll ? products.length : perPage;
+  const totalPages = showAll ? 1 : Math.max(1, Math.ceil(products.length / itemsPerPage));
   const safePage = Math.min(page, totalPages);
-  const paginatedProducts = products.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE);
-
-  // Reset to page 1 when filters change
-  const handleSearch = (value: string) => { setSearch(value); setPage(1); };
-  const handleSort = (value: SortOption) => { setSort(value); setPage(1); };
+  const paginatedProducts = showAll
+    ? products
+    : products.slice((safePage - 1) * itemsPerPage, safePage * itemsPerPage);
 
   return (
     <div className="animate-fade-in">
@@ -132,12 +179,10 @@ export default function BazaarPage() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
             <h1 className="font-display text-4xl text-gradient-coin font-bold">Bazaar</h1>
-            <LiveDot active={sseActive} />
-            {rawData?.count != null && (
-              <span className="text-muted text-sm font-mono bg-dungeon/30 px-2.5 py-1 rounded-lg">{rawData.count} items</span>
+            {products.length > 0 && (
+              <span className="text-muted text-sm font-mono bg-dungeon/30 px-2.5 py-1 rounded-lg">{products.length} items</span>
             )}
           </div>
-          <StatusBadge meta={meta} isRefetching={isFetching} sseActive={sseActive} sseAgo={sseAgo} nextUpdateIn={nextUpdateIn} />
         </div>
 
         {/* Controls */}
@@ -154,12 +199,20 @@ export default function BazaarPage() {
             onChange={(e) => handleSort(e.target.value as SortOption)}
             className="bg-nightstone border border-dungeon/50 text-body px-4 py-3 rounded-xl focus:outline-none focus:border-coin/50"
           >
-            <option value="sell-high">Sell Price: High to Low</option>
-            <option value="sell-low">Sell Price: Low to High</option>
-            <option value="buy-high">Buy Price: High to Low</option>
-            <option value="buy-low">Buy Price: Low to High</option>
-            <option value="spread-high">Spread %: High to Low</option>
-            <option value="name-az">Name: A to Z</option>
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <select
+            value={String(perPage)}
+            onChange={(e) => handlePerPage(e.target.value)}
+            className="bg-nightstone border border-dungeon/50 text-body px-4 py-3 rounded-xl focus:outline-none focus:border-coin/50 w-auto"
+          >
+            {PER_PAGE_OPTIONS.map((o) => (
+              <option key={o} value={String(o)}>
+                {o === "all" ? "Show All" : `${o} / page`}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -188,7 +241,6 @@ export default function BazaarPage() {
                       <h3 className="text-body-light font-medium text-sm flex-1 min-w-0 line-clamp-2 leading-snug pt-0.5">
                         {product.name}
                       </h3>
-                      <LiveDot />
                     </div>
 
                     <div className="space-y-3">
@@ -240,7 +292,7 @@ export default function BazaarPage() {
             {totalPages > 1 && (
               <div className="flex items-center justify-center gap-2 pt-2">
                 <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  onClick={() => setPage(Math.max(1, safePage - 1))}
                   disabled={safePage <= 1}
                   className="p-2 rounded-lg border border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                 >
@@ -273,7 +325,7 @@ export default function BazaarPage() {
                   )}
 
                 <button
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => setPage(Math.min(totalPages, safePage + 1))}
                   disabled={safePage >= totalPages}
                   className="p-2 rounded-lg border border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                 >
@@ -281,7 +333,7 @@ export default function BazaarPage() {
                 </button>
 
                 <span className="text-muted text-xs ml-3">
-                  {(safePage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(safePage * ITEMS_PER_PAGE, products.length)} of {products.length}
+                  {(safePage - 1) * itemsPerPage + 1}–{Math.min(safePage * itemsPerPage, products.length)} of {products.length}
                 </span>
               </div>
             )}

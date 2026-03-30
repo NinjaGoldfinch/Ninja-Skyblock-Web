@@ -37,14 +37,22 @@ function tickMarkFormatter(time: number, tickMarkType: TickMarkType): string {
   return `${hh}:${mm}`;
 }
 
-const CHART_THEME = {
-  layout: { background: { color: "transparent" }, textColor: "#6b7394", fontFamily: "DM Sans", attributionLogo: false },
-  grid: { vertLines: { color: "#1e213020" }, horzLines: { color: "#1e213040" } },
-  timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#1e2130", tickMarkFormatter, rightOffset: 0, shiftVisibleRangeOnNewBar: true },
-  rightPriceScale: { borderColor: "#1e2130" },
-  crosshair: { mode: CrosshairMode.Normal },
-  localization: { timeFormatter: formatChartTime },
-} as const;
+function getChartTheme() {
+  const isLight = document.documentElement.classList.contains("light");
+  const textColor = isLight ? "#6b7280" : "#6b7394";
+  const gridColor = isLight ? "#d8dae230" : "#1e213020";
+  const gridColorH = isLight ? "#d8dae250" : "#1e213040";
+  const borderColor = isLight ? "#d8dae2" : "#1e2130";
+
+  return {
+    layout: { background: { color: "transparent" }, textColor, fontFamily: "DM Sans", attributionLogo: false },
+    grid: { vertLines: { color: gridColor }, horzLines: { color: gridColorH } },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor, tickMarkFormatter, rightOffset: 0, shiftVisibleRangeOnNewBar: true },
+    rightPriceScale: { borderColor },
+    crosshair: { mode: CrosshairMode.Normal },
+    localization: { timeFormatter: formatChartTime },
+  } as const;
+}
 
 /**
  * Creates a lightweight-charts instance, handles resize (throttled), and cleans up on unmount.
@@ -59,7 +67,7 @@ export function useChart(options?: ChartOptions) {
     if (!el) return;
 
     const chart = createChart(el, {
-      ...CHART_THEME,
+      ...getChartTheme(),
       width: el.clientWidth,
       height: options?.height,
     });

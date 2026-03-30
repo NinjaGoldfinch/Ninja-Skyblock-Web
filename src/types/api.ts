@@ -242,6 +242,37 @@ export interface ItemV2 {
   [key: string]: unknown
 }
 
+// Item Textures
+export interface TextureVanilla {
+  type: 'vanilla'
+  material: string
+  durability?: number
+  glowing?: boolean
+}
+
+export interface TextureSkull {
+  type: 'skull'
+  material: string
+  durability?: number
+  skin_url?: string
+}
+
+export interface TextureLeather {
+  type: 'leather'
+  material: string
+  color: [number, number, number]
+}
+
+export interface TextureItemModel {
+  type: 'item_model'
+  material: string
+  item_model: string
+}
+
+export type TextureData = TextureVanilla | TextureSkull | TextureLeather | TextureItemModel
+
+export type TextureMap = Record<string, TextureData>
+
 // Admin
 export interface WatchedPlayer {
   uuid: string

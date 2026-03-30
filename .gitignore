@@ -8,3 +8,6 @@ dist
 .DS_Store
 Thumbs.db
 tsconfig.tsbuildinfo
+
+# Downloaded Minecraft client jar (large, re-downloadable)
+scripts/.cache/

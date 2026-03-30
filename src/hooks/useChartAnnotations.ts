@@ -4,6 +4,20 @@ import type { IChartApi, ISeriesApi, IPriceLine, ISeriesMarkersPluginApi, UTCTim
 import type { PriceStats } from "@/lib/chartStats";
 import { formatCoins, toLocalChartTime } from "@/lib/format";
 
+function getAnnotationColors() {
+  const isLight = document.documentElement.classList.contains("light");
+  return {
+    buy: isLight ? "#0d9488" : "#5ee7df",
+    buyFaded: isLight ? "#0d948880" : "#5ee7df80",
+    buyDim: isLight ? "#0d948840" : "#5ee7df40",
+    buyMuted: isLight ? "#0d948899" : "#5ee7df99",
+    sell: isLight ? "#b45309" : "#fbbf24",
+    sellFaded: isLight ? "#b4530980" : "#fbbf2480",
+    sellDim: isLight ? "#b4530940" : "#fbbf2440",
+    sellMuted: isLight ? "#b4530999" : "#fbbf2499",
+  };
+}
+
 export function useChartAnnotations(
   _chartRef: React.RefObject<IChartApi | null>,
   buySeriesRef: React.RefObject<ISeriesApi<"Area"> | null>,
@@ -29,16 +43,17 @@ export function useChartAnnotations(
     const sellSeries = sellSeriesRef.current;
     if (!enabled || !stats || !buySeries || !sellSeries) return;
 
+    const c = getAnnotationColors();
+
     const addLine = (series: ISeriesApi<"Area">, opts: CreatePriceLineOptions) => {
       const line = series.createPriceLine(opts);
       priceLinesRef.current.push({ series, line });
     };
 
-    // Current price lines (dashed) — axis label hidden to avoid duplicating the series' own last-value label
     if (stats.currentBuy > 0) {
       addLine(buySeries, {
         price: stats.currentBuy,
-        color: "#5ee7df80",
+        color: c.buyFaded,
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: false,
@@ -49,7 +64,7 @@ export function useChartAnnotations(
     if (stats.currentSell > 0) {
       addLine(sellSeries, {
         price: stats.currentSell,
-        color: "#fbbf2480",
+        color: c.sellFaded,
         lineWidth: 1,
         lineStyle: 2,
         axisLabelVisible: false,
@@ -57,11 +72,10 @@ export function useChartAnnotations(
       });
     }
 
-    // High/low lines (dotted)
     if (stats.highBuy > 0 && stats.highBuy !== stats.currentBuy) {
       addLine(buySeries, {
         price: stats.highBuy,
-        color: "#5ee7df40",
+        color: c.buyDim,
         lineWidth: 1,
         lineStyle: 3,
         axisLabelVisible: false,
@@ -72,7 +86,7 @@ export function useChartAnnotations(
     if (stats.lowSell > 0 && stats.lowSell !== stats.currentSell) {
       addLine(sellSeries, {
         price: stats.lowSell,
-        color: "#fbbf2440",
+        color: c.sellDim,
         lineWidth: 1,
         lineStyle: 3,
         axisLabelVisible: false,
@@ -80,7 +94,6 @@ export function useChartAnnotations(
       });
     }
 
-    // Markers for high/low points — small circles with price labels
     type MarkerItem = { time: UTCTimestamp; position: "aboveBar" | "belowBar"; color: string; shape: "circle"; text: string; size: number };
 
     const buyMarkers: MarkerItem[] = [];
@@ -88,7 +101,7 @@ export function useChartAnnotations(
       buyMarkers.push({
         time: toLocalChartTime(stats.highBuyTimestamp),
         position: "aboveBar",
-        color: "#5ee7df",
+        color: c.buy,
         shape: "circle",
         size: 1,
         text: `High ${formatCoins(stats.highBuy)}`,
@@ -98,7 +111,7 @@ export function useChartAnnotations(
       buyMarkers.push({
         time: toLocalChartTime(stats.lowBuyTimestamp),
         position: "belowBar",
-        color: "#5ee7df99",
+        color: c.buyMuted,
         shape: "circle",
         size: 1,
         text: `Low ${formatCoins(stats.lowBuy)}`,
@@ -117,7 +130,7 @@ export function useChartAnnotations(
       sellMarkers.push({
         time: toLocalChartTime(stats.highSellTimestamp),
         position: "aboveBar",
-        color: "#fbbf24",
+        color: c.sell,
         shape: "circle",
         size: 1,
         text: `High ${formatCoins(stats.highSell)}`,
@@ -127,7 +140,7 @@ export function useChartAnnotations(
       sellMarkers.push({
         time: toLocalChartTime(stats.lowSellTimestamp),
         position: "belowBar",
-        color: "#fbbf2499",
+        color: c.sellMuted,
         shape: "circle",
         size: 1,
         text: `Low ${formatCoins(stats.lowSell)}`,
