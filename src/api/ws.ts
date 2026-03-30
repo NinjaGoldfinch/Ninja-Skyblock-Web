@@ -14,6 +14,7 @@ class WebSocketManager {
   private reconnectDelay = 1000
   private maxReconnectDelay = 30000
   private _state: ConnectionState = 'disconnected'
+  private _intentionalClose = false
 
   get state(): ConnectionState {
     return this._state
@@ -27,6 +28,7 @@ class WebSocketManager {
   connect() {
     if (this.ws?.readyState === WebSocket.OPEN) return
 
+    this._intentionalClose = false
     const base = getApiBaseUrl().replace(/^http/, 'ws')
     const url = `${base}/v1/events/subscribe`
 
@@ -59,6 +61,10 @@ class WebSocketManager {
     }
 
     this.ws.onclose = () => {
+      if (this._intentionalClose) {
+        this._intentionalClose = false
+        return
+      }
       this.setState('reconnecting')
       this.scheduleReconnect()
     }
@@ -69,6 +75,7 @@ class WebSocketManager {
   }
 
   disconnect() {
+    this._intentionalClose = true
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null

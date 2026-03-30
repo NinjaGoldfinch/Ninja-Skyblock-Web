@@ -1,9 +1,9 @@
 import { useState, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ShoppingCart, Store } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ShoppingCart, Store, Tag, BarChart3 } from "lucide-react";
 import { ItemIcon } from "@/components/ui/ItemIcon";
-import { getBazaarItem, getBazaarHistory } from "@/api/endpoints";
+import { getBazaarItem } from "@/api/endpoints";
 import { PriceDisplay } from "@/components/ui/PriceDisplay";
 import { DataCard } from "@/components/ui/DataCard";
 import { StatusBadge } from "@/components/layout/StatusBadge";
@@ -11,18 +11,18 @@ import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { JsonViewer } from "@/components/ui/JsonViewer";
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart";
-import { formatNumber } from "@/lib/format";
+import { PriceStatsBar } from "@/components/charts/PriceStatsBar";
+import { computePriceStats } from "@/lib/chartStats";
+import { formatNumber, formatCoins, calcSpread } from "@/lib/format";
+import { getSettings, saveSettings } from "@/lib/settings";
 import { useItemNames } from "@/hooks/useItemNames";
+import { useBazaarHistory } from "@/hooks/useBazaarHistory";
+import { useSseLiveStatus } from "@/hooks/useSseLiveStatus";
+import { useSseChangeLog } from "@/hooks/useSseChangeLog";
+import { useNextUpdate } from "@/hooks/useNextUpdate";
 import type { BazaarHistoryPoint } from "@/types/api";
 
 type TimeRange = "1h" | "6h" | "24h" | "7d";
-
-const TIME_RANGE_MS: Record<TimeRange, number> = {
-  "1h": 60 * 60 * 1000,
-  "6h": 6 * 60 * 60 * 1000,
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-};
 
 interface OrderEntry {
   amount: number;
@@ -30,7 +30,7 @@ interface OrderEntry {
   orders: number;
 }
 
-// Raw API response — field names are inverted from the user's perspective
+// V2 API response — field names use Hypixel's internal naming (inverted from user perspective)
 interface V2BazaarItemRaw {
   item_id: string;
   display_name?: string;
@@ -48,36 +48,33 @@ interface V2BazaarItemRaw {
   top_sell_orders: OrderEntry[];
 }
 
-/** Derive all display values from the order book directly.
- *  API field names are inverted: API "sell" = user buying, API "buy" = user selling. */
+/** Derive display values from the V2 order book.
+ *  V2 API uses Hypixel's internal naming (inverted from user perspective):
+ *    top_sell_orders = sell orders on the book = what user buys from (cheapest first)
+ *    top_buy_orders  = buy orders on the book = what user sells to (highest first)
+ *    instant_buy_price = cheapest sell order price (what user pays to instant-buy)
+ *    instant_sell_price = highest buy order price (what user gets to instant-sell) */
 function deriveItemData(raw: V2BazaarItemRaw) {
-  // Swap: API top_sell_orders are what the user buys from, API top_buy_orders are what the user sells to
-  const sellOrders = raw.top_sell_orders ?? []; // user buys from these
-  const buyOrders = raw.top_buy_orders ?? [];   // user sells to these
+  // Swap to user perspective
+  const buyFromOrders = raw.top_sell_orders ?? [];  // user buys from sell orders
+  const sellToOrders = raw.top_buy_orders ?? [];    // user sells to buy orders
 
-  // Buy price = highest buy order (first entry, sorted highest first)
-  const buyPrice = buyOrders[0]?.price_per_unit ?? 0;
+  const buyPrice = raw.instant_buy_price ?? buyFromOrders[0]?.price_per_unit ?? 0;
+  const sellPrice = raw.instant_sell_price ?? sellToOrders[0]?.price_per_unit ?? 0;
 
-  // Sell price = cheapest sell order (first entry, sorted lowest first)
-  const sellPrice = sellOrders[0]?.price_per_unit ?? 0;
+  const { spread, spreadPercent } = calcSpread(buyPrice, sellPrice);
 
-  const spread = buyPrice - sellPrice;
-  const spreadPercent = sellPrice > 0 ? (spread / sellPrice) * 100 : 0;
+  const buyOrderCount = buyFromOrders.reduce((sum, o) => sum + o.orders, 0);
+  const buyItemCount = buyFromOrders.reduce((sum, o) => sum + o.amount, 0);
 
-  // Buy volume: total orders and total items from sell orders (what's available to buy)
-  const buyOrderCount = sellOrders.reduce((sum, o) => sum + o.orders, 0);
-  const buyItemCount = sellOrders.reduce((sum, o) => sum + o.amount, 0);
+  const sellOrderCount = sellToOrders.reduce((sum, o) => sum + o.orders, 0);
+  const sellItemCount = sellToOrders.reduce((sum, o) => sum + o.amount, 0);
 
-  // Sell volume: total orders and total items from buy orders (demand to sell into)
-  const sellOrderCount = buyOrders.reduce((sum, o) => sum + o.orders, 0);
-  const sellItemCount = buyOrders.reduce((sum, o) => sum + o.amount, 0);
-
-  // Average prices weighted by amount
   const avgBuyPrice = buyItemCount > 0
-    ? sellOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / buyItemCount
+    ? buyFromOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / buyItemCount
     : 0;
   const avgSellPrice = sellItemCount > 0
-    ? buyOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / sellItemCount
+    ? sellToOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / sellItemCount
     : 0;
 
   return {
@@ -92,16 +89,24 @@ function deriveItemData(raw: V2BazaarItemRaw) {
     sellItemCount,
     avgBuyPrice,
     avgSellPrice,
-    // Keep order arrays in user perspective for tables
-    topBuyOrders: sellOrders,   // orders you can buy from
-    topSellOrders: buyOrders,   // orders you can sell to
+    topBuyOrders: buyFromOrders,   // orders you can buy from (sell orders)
+    topSellOrders: sellToOrders,   // orders you can sell to (buy orders)
   };
 }
 
 export default function BazaarItemPage() {
   const { itemId } = useParams<{ itemId: string }>();
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
+  const [showAnnotations, setShowAnnotations] = useState(() => getSettings().showChartAnnotations);
+  const [showStats, setShowStats] = useState(() => getSettings().showStatsBar);
   const { getName } = useItemNames();
+
+  const toggleAnnotations = () => {
+    setShowAnnotations((v) => { saveSettings({ showChartAnnotations: !v }); return !v; });
+  };
+  const toggleStats = () => {
+    setShowStats((v) => { saveSettings({ showStatsBar: !v }); return !v; });
+  };
 
   const {
     data: itemResp,
@@ -118,25 +123,38 @@ export default function BazaarItemPage() {
   const rawItem = itemResp?.data as unknown as V2BazaarItemRaw | undefined;
   const meta = itemResp?.meta;
 
+  const { sseActive, sseAgo: sseStreamAgo } = useSseLiveStatus("__bazaar_listing__");
+  const { sseAgo: sseItemAgo } = useSseLiveStatus(itemId);
+  const changeLog = useSseChangeLog(itemId);
+  const itemQueryKey = useMemo(() => ["bazaar-item", itemId] as const, [itemId]);
+  const nextUpdateIn = useNextUpdate(itemQueryKey);
+
+  // History via V2 endpoint (SSE extrapolated mode patches this cache)
   const {
-    data: historyResp,
-    isLoading: historyLoading,
-    isError: historyError,
+    datapoints: historyDatapoints,
+    loading: historyLoading,
     error: historyErr,
-  } = useQuery({
-    queryKey: ["bazaar-history", itemId],
-    queryFn: () => getBazaarHistory(itemId!),
-    enabled: !!itemId,
-  });
+  } = useBazaarHistory(itemId, timeRange as "1h" | "6h" | "24h" | "7d");
 
-  const historyRaw = historyResp?.data;
-  const history: BazaarHistoryPoint[] | undefined = Array.isArray(historyRaw) ? historyRaw : undefined;
+  const historyError = !!historyErr;
 
-  const filteredHistory = useMemo(() => {
-    if (!history) return [];
-    const cutoff = Date.now() - TIME_RANGE_MS[timeRange];
-    return history.filter((point) => point.timestamp >= cutoff);
-  }, [history, timeRange]);
+  // Convert V2 datapoints to the BazaarHistoryPoint format used by PriceHistoryChart
+  const filteredHistory: BazaarHistoryPoint[] = useMemo(() => {
+    return historyDatapoints.map((d) => ({
+      timestamp: d.timestamp,
+      buy_price: d.instant_buy_price,
+      sell_price: d.instant_sell_price,
+    }));
+  }, [historyDatapoints]);
+
+  const priceStats = useMemo(
+    () => computePriceStats(filteredHistory.map((d) => ({
+      timestamp: d.timestamp,
+      buyPrice: d.buy_price,
+      sellPrice: d.sell_price,
+    }))),
+    [filteredHistory],
+  );
 
   if (itemLoading) {
     return (
@@ -180,12 +198,12 @@ export default function BazaarItemPage() {
               <span className="text-muted font-mono text-xs bg-dungeon/30 px-2 py-0.5 rounded-md">{item.itemId}</span>
             </div>
           </div>
-          <StatusBadge meta={meta} isRefetching={isFetching} />
+          <StatusBadge meta={meta} isRefetching={isFetching} sseActive={sseActive} sseAgo={sseStreamAgo} sseItemAgo={sseItemAgo} nextUpdateIn={nextUpdateIn} />
         </div>
       </div>
 
       {/* Price overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 stagger-children">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 stagger-children">
         {/* Buy side */}
         <DataCard className={item.buyPrice > 0 ? "border-green-500/10" : ""}>
           <div className="flex items-center gap-2 mb-4">
@@ -193,12 +211,11 @@ export default function BazaarItemPage() {
               <TrendingUp size={16} className="text-green-400" />
             </div>
             <span className="text-sm font-medium text-body">Buy Price</span>
-            <span className="text-muted text-xs ml-auto">Highest buy order</span>
           </div>
           {item.buyPrice > 0 ? (
             <PriceDisplay amount={item.buyPrice} size="lg" />
           ) : (
-            <span className="text-muted/50 text-lg">Nobody is buying this item</span>
+            <span className="text-muted/50 text-lg">No buy orders</span>
           )}
           <div className="mt-4 pt-3 border-t border-dungeon/20 grid grid-cols-3 gap-3">
             <div>
@@ -226,12 +243,11 @@ export default function BazaarItemPage() {
               <TrendingDown size={16} className="text-enchant" />
             </div>
             <span className="text-sm font-medium text-body">Sell Price</span>
-            <span className="text-muted text-xs ml-auto">Cheapest sell order</span>
           </div>
           {item.sellPrice > 0 ? (
             <PriceDisplay amount={item.sellPrice} size="lg" />
           ) : (
-            <span className="text-muted/50 text-lg">Nobody is selling this item</span>
+            <span className="text-muted/50 text-lg">No sell orders</span>
           )}
           <div className="mt-4 pt-3 border-t border-dungeon/20 grid grid-cols-3 gap-3">
             <div>
@@ -251,32 +267,48 @@ export default function BazaarItemPage() {
             </div>
           </div>
         </DataCard>
-      </div>
 
-      {/* Spread banner */}
-      {item.buyPrice > 0 && item.sellPrice > 0 && (
-        <DataCard className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              item.spreadPercent >= 0 ? "bg-green-500/10" : "bg-damage/10"
-            }`}>
-              {item.spreadPercent >= 0
-                ? <ArrowUpRight size={16} className="text-green-400" />
-                : <ArrowDownRight size={16} className="text-damage" />
-              }
+        {/* Flip Profit */}
+        {item.buyPrice > 0 && item.sellPrice > 0 && (
+          <DataCard>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                  item.spreadPercent >= 0 ? "bg-green-500/10" : "bg-damage/10"
+                }`}>
+                  {item.spreadPercent >= 0
+                    ? <ArrowUpRight size={16} className="text-green-400" />
+                    : <ArrowDownRight size={16} className="text-damage" />
+                  }
+                </div>
+                <span className="text-sm font-medium text-body">Flip Profit</span>
+              </div>
+              <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded-md ${
+                item.spreadPercent >= 0
+                  ? "text-green-400 bg-green-500/10"
+                  : "text-damage bg-damage/10"
+              }`}>
+                {item.spreadPercent >= 0 ? "+" : ""}{item.spreadPercent.toFixed(2)}%
+              </span>
             </div>
-            <div>
-              <p className="text-muted text-xs font-medium">Spread</p>
-              <PriceDisplay amount={Math.abs(item.spread)} size="md" />
+            <PriceDisplay amount={Math.abs(item.spread)} size="lg" />
+            <div className="mt-4 pt-3 border-t border-dungeon/20 grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">Per Stack (64)</p>
+                <p className={`font-mono text-sm font-medium ${item.spread >= 0 ? "text-green-400" : "text-damage"}`}>
+                  {formatCoins(Math.abs(item.spread * 64))}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">Per 1k</p>
+                <p className={`font-mono text-sm font-medium ${item.spread >= 0 ? "text-green-400" : "text-damage"}`}>
+                  {formatCoins(Math.abs(item.spread * 1000))}
+                </p>
+              </div>
             </div>
-          </div>
-          <span className={`text-2xl font-mono font-bold ${
-            item.spreadPercent >= 0 ? "text-green-400" : "text-damage"
-          }`}>
-            {item.spreadPercent >= 0 ? "+" : ""}{item.spreadPercent.toFixed(2)}%
-          </span>
-        </DataCard>
-      )}
+          </DataCard>
+        )}
+      </div>
 
       {/* Order tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -355,7 +387,7 @@ export default function BazaarItemPage() {
 
       {/* Price history chart */}
       <DataCard title="Price History">
-        <div className="flex gap-2 mb-5">
+        <div className="flex items-center gap-2 mb-5 flex-wrap">
           {(["1h", "6h", "24h", "7d"] as TimeRange[]).map((range) => (
             <button
               key={range}
@@ -369,12 +401,39 @@ export default function BazaarItemPage() {
               {range}
             </button>
           ))}
+
+          <div className="flex gap-1.5 ml-auto">
+            <button
+              onClick={toggleAnnotations}
+              title="Toggle chart annotations"
+              className={`p-2 rounded-lg border transition-all ${
+                showAnnotations
+                  ? "bg-coin/10 text-coin border-coin/30"
+                  : "border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60"
+              }`}
+            >
+              <Tag size={14} />
+            </button>
+            <button
+              onClick={toggleStats}
+              title="Toggle stats bar"
+              className={`p-2 rounded-lg border transition-all ${
+                showStats
+                  ? "bg-coin/10 text-coin border-coin/30"
+                  : "border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60"
+              }`}
+            >
+              <BarChart3 size={14} />
+            </button>
+          </div>
         </div>
+
+        {showStats && priceStats && <PriceStatsBar stats={priceStats} className="mb-4" />}
 
         {historyLoading && <LoadingSkeleton lines={3} />}
         {historyError && <ErrorState error={historyErr instanceof Error ? historyErr : new Error("Failed to fetch history")} />}
         {!historyLoading && !historyError && filteredHistory.length > 0 && (
-          <PriceHistoryChart data={filteredHistory} />
+          <PriceHistoryChart data={filteredHistory} stats={priceStats} showAnnotations={showAnnotations} />
         )}
         {!historyLoading && !historyError && filteredHistory.length === 0 && (
           <div className="text-center py-10 text-muted">
@@ -383,8 +442,63 @@ export default function BazaarItemPage() {
         )}
       </DataCard>
 
-      {/* Raw JSON */}
-      <JsonViewer data={rawItem} title="Raw API Response" />
+      {/* SSE Change Log */}
+      {changeLog.length > 0 && (
+        <DataCard title="SSE Change Log">
+          <div className="bg-void/40 border border-dungeon/30 rounded-xl overflow-y-auto max-h-64">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 glass border-b border-dungeon/30">
+                <tr className="text-muted text-left">
+                  <th className="px-4 py-2.5 font-medium">Time</th>
+                  <th className="px-4 py-2.5 font-medium">Field</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Old</th>
+                  <th className="px-4 py-2.5 font-medium text-right">New</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {changeLog.flatMap((entry, ei) =>
+                  entry.changes.map((c, ci) => {
+                    const diff = c.newValue - c.oldValue;
+                    const pct = c.oldValue !== 0 ? (diff / c.oldValue) * 100 : 0;
+                    const isPrice = c.field.includes("price");
+                    const color = diff > 0 ? "text-green-400" : diff < 0 ? "text-red-400" : "text-muted";
+                    const label = c.field.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+
+                    return (
+                      <tr key={`${ei}-${ci}`} className="border-t border-dungeon/15 hover:bg-coin/3 transition-colors">
+                        {ci === 0 ? (
+                          <td className="px-4 py-2 text-muted whitespace-nowrap" rowSpan={entry.changes.length}>
+                            {new Date(entry.timestamp).toLocaleTimeString()}
+                          </td>
+                        ) : null}
+                        <td className="px-4 py-2 text-body">{label}</td>
+                        <td className="px-4 py-2 font-mono text-muted text-right">
+                          {isPrice ? formatCoins(c.oldValue) : formatNumber(c.oldValue, 1)}
+                        </td>
+                        <td className={`px-4 py-2 font-mono text-right font-medium ${color}`}>
+                          {isPrice ? formatCoins(c.newValue) : formatNumber(c.newValue, 1)}
+                        </td>
+                        <td className={`px-4 py-2 font-mono text-right ${color}`}>
+                          {diff > 0 ? "+" : ""}{isPrice ? formatCoins(Math.abs(diff)) : formatNumber(Math.abs(diff), 1)}
+                          {pct !== 0 && (
+                            <span className="block text-[10px] text-muted/60">
+                              {pct > 0 ? "+" : ""}{pct.toFixed(3)}%
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </DataCard>
+      )}
+
+      {/* Raw JSON (reflects SSE patches) */}
+      <JsonViewer data={rawItem} title="Raw API Response (Live)" />
     </div>
   );
 }

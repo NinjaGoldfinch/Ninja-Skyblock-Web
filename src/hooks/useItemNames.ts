@@ -15,6 +15,7 @@ function titleCase(s: string): string {
 }
 
 function formatProductId(productId: string): string {
+  if (!productId) return "(no item_id)";
   // ENCHANTMENT_ULTIMATE_CHIMERA_5 → "Ultimate Chimera V"
   // ENCHANTMENT_SHARPNESS_7 → "Sharpness VII"
   const enchMatch = productId.match(/^ENCHANTMENT_(.+?)_(\d+)$/);

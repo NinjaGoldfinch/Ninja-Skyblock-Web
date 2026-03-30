@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { sseClient } from '@/api/sse'
-import type { BazaarSseEvent } from '@/types/api'
+import type { SseState, SseEvent } from '@/api/sse'
+
+export type { SseEvent }
 
 export function useSseStream() {
-  const [events, setEvents] = useState<BazaarSseEvent[]>([])
-  const [connected, setConnected] = useState(sseClient.connected)
+  const [events, setEvents] = useState<SseEvent[]>([])
+  const [state, setState] = useState<SseState>(sseClient.state)
+  const [lastError, setLastError] = useState<string | null>(sseClient.lastError)
   const [paused, setPaused] = useState(false)
   const pausedRef = useRef(false)
 
@@ -13,7 +16,7 @@ export function useSseStream() {
   }, [paused])
 
   useEffect(() => {
-    const unsub = sseClient.onEvent((event) => {
+    const unsubEvent = sseClient.onEvent((event) => {
       if (!pausedRef.current) {
         setEvents(prev => {
           const next = [event, ...prev]
@@ -22,29 +25,27 @@ export function useSseStream() {
       }
     })
 
-    // Poll connected state
-    const interval = setInterval(() => {
-      setConnected(sseClient.connected)
-    }, 1000)
+    const unsubState = sseClient.onStateChange((newState) => {
+      setState(newState)
+      setLastError(sseClient.lastError)
+    })
 
     return () => {
-      unsub()
-      clearInterval(interval)
+      unsubEvent()
+      unsubState()
     }
   }, [])
 
   const connect = useCallback(() => {
     sseClient.connect()
-    setConnected(true)
   }, [])
 
   const disconnect = useCallback(() => {
     sseClient.disconnect()
-    setConnected(false)
   }, [])
 
   const togglePause = useCallback(() => setPaused(p => !p), [])
   const clearEvents = useCallback(() => setEvents([]), [])
 
-  return { events, connected, paused, connect, disconnect, togglePause, clearEvents }
+  return { events, state, lastError, paused, connect, disconnect, togglePause, clearEvents }
 }

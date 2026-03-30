@@ -16,6 +16,9 @@ export default function SettingsPage() {
       autoRefreshInterval: saved.autoRefreshInterval ?? 60,
       priceAbbreviated: saved.priceAbbreviated ?? true,
       theme: saved.theme ?? "dark",
+      showChartAnnotations: saved.showChartAnnotations ?? true,
+      showStatsBar: saved.showStatsBar ?? true,
+      liveDataMode: saved.liveDataMode ?? 'off',
     };
   });
 
@@ -178,6 +181,38 @@ export default function SettingsPage() {
             />
             Abbreviate prices (e.g. 1.5M instead of 1,500,000)
           </label>
+        </div>
+
+        {/* Live Data Mode */}
+        <div className="glass rounded-2xl border border-dungeon/40 p-6 space-y-4">
+          <span className="block font-display text-sm text-gradient-coin font-semibold">
+            Live Data Mode
+          </span>
+          <p className="text-muted text-xs">
+            Controls how SSE events update bazaar data in real-time.
+          </p>
+          <div className="flex flex-col gap-3">
+            {([
+              ["off", "Off", "No live updates from SSE (default)"],
+              ["full", "Full Data", "SSE events update displayed prices in real-time"],
+              ["extrapolated", "Extrapolated", "Prices update + chart history appends datapoints with carry-forward fill"],
+            ] as const).map(([value, label, desc]) => (
+              <label key={value} className="flex items-start gap-3 text-body cursor-pointer group">
+                <input
+                  type="radio"
+                  name="liveDataMode"
+                  value={value}
+                  checked={settings.liveDataMode === value}
+                  onChange={() => update("liveDataMode", value)}
+                  className="accent-coin w-4 h-4 mt-0.5"
+                />
+                <div>
+                  <span className="group-hover:text-body-light transition-colors font-medium">{label}</span>
+                  <p className="text-muted text-xs mt-0.5">{desc}</p>
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Save Button */}

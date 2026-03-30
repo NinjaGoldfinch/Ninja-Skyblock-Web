@@ -1,4 +1,18 @@
+import type { UTCTimestamp } from 'lightweight-charts'
 import { getSettings } from './settings'
+
+/** Convert a ms-epoch timestamp to a lightweight-charts UTCTimestamp adjusted for the local timezone. */
+export function toLocalChartTime(timestampMs: number): UTCTimestamp {
+  const offsetSec = new Date(timestampMs).getTimezoneOffset() * 60
+  return ((timestampMs / 1000) - offsetSec) as UTCTimestamp
+}
+
+/** Spread = sellPrice - buyPrice (positive when selling is more profitable than buying) */
+export function calcSpread(buyPrice: number, sellPrice: number): { spread: number; spreadPercent: number } {
+  const spread = sellPrice - buyPrice
+  const spreadPercent = buyPrice > 0 ? (spread / buyPrice) * 100 : 0
+  return { spread, spreadPercent }
+}
 
 export function formatCoins(value: number): string {
   const settings = getSettings()

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { getBazaar } from "@/api/endpoints";
 import { PriceDisplay } from "@/components/ui/PriceDisplay";
+import { calcSpread } from "@/lib/format";
 import { ItemIcon } from "@/components/ui/ItemIcon";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { DataCard } from "@/components/ui/DataCard";
@@ -11,6 +12,9 @@ import { CardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { StatusBadge } from "@/components/layout/StatusBadge";
 import { useItemNames } from "@/hooks/useItemNames";
+import { useSseLiveStatus } from "@/hooks/useSseLiveStatus";
+import { useNextUpdate } from "@/hooks/useNextUpdate";
+import type { BazaarProductRaw } from "@/types/api";
 
 type SortOption =
   | "sell-high"
@@ -19,13 +23,6 @@ type SortOption =
   | "buy-low"
   | "spread-high"
   | "name-az";
-
-interface BazaarProductRaw {
-  product_id: string;
-  sell_summary: { amount: number; pricePerUnit: number; orders: number }[];
-  buy_summary: { amount: number; pricePerUnit: number; orders: number }[];
-  quick_status?: unknown;
-}
 
 interface ParsedProduct {
   product_id: string;
@@ -41,16 +38,15 @@ interface ParsedProduct {
 }
 
 function parseProduct(raw: BazaarProductRaw, getName: (id: string) => string): ParsedProduct {
-  // API names are inverted: buy_summary = orders users sell to, sell_summary = orders users buy from
-  // Buy price = highest buy order (buy_summary[0], sorted highest first)
-  const buyPrice = raw.buy_summary?.[0]?.pricePerUnit ?? 0;
-  // Sell price = cheapest sell order (sell_summary[0], sorted lowest first)
-  const sellPrice = raw.sell_summary?.[0]?.pricePerUnit ?? 0;
+  // V1 API uses Hypixel's internal naming (inverted from user perspective):
+  //   sell_summary = sell orders on the book = what user pays to instant-buy (cheapest first)
+  //   buy_summary  = buy orders on the book = what user receives to instant-sell (highest first)
+  const buyPrice = raw.sell_summary?.[0]?.pricePerUnit ?? 0;   // cheapest instant-buy price
+  const sellPrice = raw.buy_summary?.[0]?.pricePerUnit ?? 0;   // highest instant-sell price
 
-  const spread = buyPrice - sellPrice;
-  const spreadPercent = sellPrice > 0 ? (spread / sellPrice) * 100 : 0;
+  const { spread, spreadPercent } = calcSpread(buyPrice, sellPrice);
 
-  // Volume: swap API fields to match user perspective
+  // Volume: map to user perspective
   const buyOrders = raw.sell_summary?.reduce((sum, o) => sum + o.orders, 0) ?? 0;
   const buyVolume = raw.sell_summary?.reduce((sum, o) => sum + o.amount, 0) ?? 0;
   const sellOrders = raw.buy_summary?.reduce((sum, o) => sum + o.orders, 0) ?? 0;
@@ -78,10 +74,14 @@ export default function BazaarPage() {
   const [page, setPage] = useState(1);
   const { getName } = useItemNames();
 
+  const bazaarQueryKey = ["bazaar"] as const;
   const { data: resp, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ["bazaar"],
+    queryKey: bazaarQueryKey,
     queryFn: () => getBazaar(),
   });
+
+  const { sseActive, sseAgo } = useSseLiveStatus("__bazaar_listing__");
+  const nextUpdateIn = useNextUpdate(bazaarQueryKey);
 
   const rawData = resp?.data as unknown as { products?: Record<string, BazaarProductRaw>; count?: number } | undefined;
   const meta = resp?.meta;
@@ -132,12 +132,12 @@ export default function BazaarPage() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
             <h1 className="font-display text-4xl text-gradient-coin font-bold">Bazaar</h1>
-            <LiveDot />
+            <LiveDot active={sseActive} />
             {rawData?.count != null && (
               <span className="text-muted text-sm font-mono bg-dungeon/30 px-2.5 py-1 rounded-lg">{rawData.count} items</span>
             )}
           </div>
-          <StatusBadge meta={meta} isRefetching={isFetching} />
+          <StatusBadge meta={meta} isRefetching={isFetching} sseActive={sseActive} sseAgo={sseAgo} nextUpdateIn={nextUpdateIn} />
         </div>
 
         {/* Controls */}

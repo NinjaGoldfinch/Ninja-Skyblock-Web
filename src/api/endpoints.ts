@@ -3,9 +3,10 @@ import type {
   HealthResponse,
   ProfileV2,
   ProfileSummary,
-  BazaarProduct,
+  BazaarProductRaw,
   BazaarItemV2,
   BazaarHistory,
+  BazaarHistoryV2,
   LowestBins,
   AuctionSearchResult,
   PlayerAuction,
@@ -40,13 +41,16 @@ export const getProfileV1 = (profileUuid: string) =>
   apiGet<unknown>(`/v1/skyblock/profile/${encodeURIComponent(profileUuid)}`)
 
 // Bazaar
-export const getBazaar = () => apiGet<Record<string, BazaarProduct>>('/v1/skyblock/bazaar')
+export const getBazaar = () => apiGet<Record<string, BazaarProductRaw>>('/v1/skyblock/bazaar')
 
 export const getBazaarItem = (itemId: string) =>
   apiGet<BazaarItemV2>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}`)
 
 export const getBazaarHistory = (itemId: string) =>
   apiGet<BazaarHistory>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}/history`)
+
+export const getBazaarHistoryV2 = (itemId: string, range: string) =>
+  apiGet<BazaarHistoryV2>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}/history`, { range })
 
 // Auctions
 export const getLowestBins = () => apiGet<LowestBins>('/v2/skyblock/auctions/lowest')

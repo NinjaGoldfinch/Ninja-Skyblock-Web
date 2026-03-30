@@ -111,12 +111,12 @@ export interface ProfileV2 {
   raw?: unknown
 }
 
-// Bazaar
-export interface BazaarProduct {
+// Bazaar (V1 listing — Hypixel's inverted naming)
+export interface BazaarProductRaw {
   product_id: string
   sell_summary: BazaarOrder[]
   buy_summary: BazaarOrder[]
-  quick_status: BazaarQuickStatus
+  quick_status?: BazaarQuickStatus
 }
 
 export interface BazaarOrder {
@@ -159,6 +159,32 @@ export interface BazaarHistoryPoint {
 }
 
 export type BazaarHistory = BazaarHistoryPoint[]
+
+export interface BazaarHistoryDatapoint {
+  timestamp: number
+  instant_buy_price: number
+  instant_sell_price: number
+  avg_buy_price: number
+  avg_sell_price: number
+  buy_volume: number
+  sell_volume: number
+}
+
+export interface BazaarHistorySummary {
+  avg_instant_buy: number
+  avg_instant_sell: number
+  avg_buy: number
+  avg_sell: number
+}
+
+export interface BazaarHistoryV2 {
+  item_id: string
+  range: string
+  resolution: string
+  count: number
+  summary: BazaarHistorySummary
+  datapoints: BazaarHistoryDatapoint[]
+}
 
 // Auctions
 export interface LowestBinItem {
@@ -273,6 +299,9 @@ export interface AppSettings {
   autoRefreshInterval: number
   priceAbbreviated: boolean
   theme: 'dark' | 'light'
+  showChartAnnotations: boolean
+  showStatsBar: boolean
+  liveDataMode: 'off' | 'full' | 'extrapolated'
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -283,4 +312,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRefreshInterval: 60,
   priceAbbreviated: true,
   theme: 'dark',
+  showChartAnnotations: true,
+  showStatsBar: true,
+  liveDataMode: 'off',
 }

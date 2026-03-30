@@ -5,11 +5,20 @@ import { Toaster } from 'sonner'
 
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
+import { useSseCacheBridge } from '@/hooks/useSseCacheBridge'
+import { useSseToasts } from '@/hooks/useSseToasts'
+
+function SseBridge() {
+  useSseCacheBridge()
+  useSseToasts()
+  return null
+}
 
 import DashboardPage from '@/pages/DashboardPage'
 import PlayerPage from '@/pages/PlayerPage'
 import BazaarPage from '@/pages/BazaarPage'
 import BazaarItemPage from '@/pages/BazaarItemPage'
+import BazaarChartPage from '@/pages/BazaarChartPage'
 import AuctionHousePage from '@/pages/AuctionHousePage'
 import ItemsPage from '@/pages/ItemsPage'
 import RealTimePage from '@/pages/RealTimePage'
@@ -34,6 +43,7 @@ export default function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <SseBridge />
       <BrowserRouter>
         <div className="flex h-screen overflow-hidden bg-void">
           <Sidebar
@@ -47,6 +57,7 @@ export default function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/player" element={<PlayerPage />} />
                 <Route path="/bazaar" element={<BazaarPage />} />
+                <Route path="/bazaar/chart" element={<BazaarChartPage />} />
                 <Route path="/bazaar/:itemId" element={<BazaarItemPage />} />
                 <Route path="/auctions" element={<AuctionHousePage />} />
                 <Route path="/auctions/player/:playerUuid" element={<AuctionHousePage />} />

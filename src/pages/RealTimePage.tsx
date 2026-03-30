@@ -1,13 +1,75 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Zap, Play, Pause, Trash2, Wifi, WifiOff } from "lucide-react";
+import { Zap, Play, Pause, Trash2, Wifi, WifiOff, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { useSseStream } from "@/hooks/useSseStream";
+import type { SseEvent } from "@/hooks/useSseStream";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DataCard } from "@/components/ui/DataCard";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { JsonViewer } from "@/components/ui/JsonViewer";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatCoins } from "@/lib/format";
 import { useItemNames } from "@/hooks/useItemNames";
-import type { BazaarSseEvent } from "@/types/api";
+
+// --- SSE event helpers ---
+
+const PRICE_FIELDS = new Set(["instant_buy_price", "instant_sell_price", "avg_buy_price", "avg_sell_price"]);
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  "bazaar:price_change": "Price Change",
+  "auction:sold": "Auction Sold",
+  "auction:new": "New Auction",
+  "auction:ending": "Auction Ending",
+  "profile:change": "Profile Change",
+};
+
+/** Extract old→new change pairs from an event (matches old_X / new_X patterns) */
+function extractChanges(event: SseEvent): { field: string; label: string; oldVal: number; newVal: number; diff: number; pct: number; direction: "up" | "down" | "flat" }[] {
+  const changes: ReturnType<typeof extractChanges> = [];
+  const keys = Object.keys(event);
+  for (const key of keys) {
+    if (!key.startsWith("old_")) continue;
+    const base = key.slice(4); // strip "old_"
+    const newKey = `new_${base}`;
+    if (!(newKey in event)) continue;
+
+    const oldVal = Number(event[key]);
+    const newVal = Number(event[newKey]);
+    if (isNaN(oldVal) || isNaN(newVal)) continue;
+
+    const diff = newVal - oldVal;
+    const pct = oldVal !== 0 ? (diff / oldVal) * 100 : 0;
+    const direction = diff > 0 ? "up" as const : diff < 0 ? "down" as const : "flat" as const;
+
+    const label = base.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+    changes.push({ field: base, label, oldVal, newVal, diff, pct, direction });
+  }
+  return changes;
+}
+
+/** Get the best identifier for an event */
+function getEventItemId(event: SseEvent): string | undefined {
+  return (event.item_id ?? event.skyblock_id ?? event.product_id) as string | undefined;
+}
+
+/** Get a short summary line for the table */
+function getEventSummary(event: SseEvent, changes: ReturnType<typeof extractChanges>): string {
+  const type = event.type as string | undefined;
+  if (type === "auction:sold") {
+    return `Sold for ${formatCoins(Number(event.price) || 0)}${event.bin ? " (BIN)" : ""}`;
+  }
+  if (changes.length > 0) {
+    const main = changes[0]!;
+    const dir = main.direction === "up" ? "+" : main.direction === "down" ? "" : "";
+    return `${main.label}: ${dir}${main.pct.toFixed(2)}%`;
+  }
+  return type ?? "Event";
+}
+
+function formatFieldValue(field: string, value: number): string {
+  if (PRICE_FIELDS.has(field)) return formatCoins(value);
+  if (field.includes("price")) return formatCoins(value);
+  return value.toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
 
 const CHANNELS = [
   "bazaar:alerts",
@@ -59,13 +121,26 @@ export default function RealTimePage() {
 }
 
 function SseTab() {
-  const { events, connected, paused, connect, disconnect, togglePause, clearEvents } =
+  const { events, state, lastError, paused, connect, disconnect, togglePause, clearEvents } =
     useSseStream();
   const { getName } = useItemNames();
   const [filter, setFilter] = useState("");
   const [eventsPerSec, setEventsPerSec] = useState(0);
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const prevLengthRef = useRef(0);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const toggleRow = (index: number) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const connected = state === "connected";
+  const connecting = state === "connecting";
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -84,17 +159,30 @@ function SseTab() {
   }, [events.length, paused]);
 
   const filtered = filter
-    ? (events as BazaarSseEvent[]).filter((e) =>
-        e.item_id.toLowerCase().includes(filter.toLowerCase())
-      )
-    : (events as BazaarSseEvent[]);
+    ? events.filter((e) => {
+        const id = getEventItemId(e) ?? "";
+        const type = (e.type as string) ?? "";
+        const name = (e.item_name as string) ?? "";
+        const term = filter.toLowerCase();
+        return id.toLowerCase().includes(term) || type.toLowerCase().includes(term) || name.toLowerCase().includes(term);
+      })
+    : events;
 
   const display = filtered.slice(-200);
+
+  const statusColor =
+    connected
+      ? "bg-green-500/10 text-green-400 border-green-500/20"
+      : state === "error"
+      ? "bg-red-500/10 text-red-400 border-red-500/20"
+      : connecting
+      ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/20"
+      : "bg-red-500/10 text-muted border-dungeon/30";
 
   return (
     <DataCard>
       <div className="flex flex-wrap items-center gap-3 mb-5">
-        {connected ? (
+        {connected || connecting ? (
           <button
             onClick={disconnect}
             className="flex items-center gap-2 px-4 py-2 bg-damage/10 text-damage rounded-xl text-sm font-semibold border border-damage/20 hover:bg-damage/15 transition-all"
@@ -111,6 +199,12 @@ function SseTab() {
             Connect
           </button>
         )}
+
+        <span className={`px-3 py-1 rounded-lg text-xs font-semibold border ${statusColor}`}>
+          {state}
+        </span>
+
+        <span className="text-muted/50 text-[10px] font-mono hidden sm:inline">/v1/events/bazaar/stream</span>
 
         <button
           onClick={togglePause}
@@ -136,6 +230,12 @@ function SseTab() {
         </div>
       </div>
 
+      {lastError && (
+        <div className="mb-4 px-4 py-3 rounded-xl bg-damage/5 border border-damage/20 text-damage text-sm">
+          {lastError}
+        </div>
+      )}
+
       <div className="mb-5">
         <input
           type="text"
@@ -150,35 +250,132 @@ function SseTab() {
         <table className="w-full text-xs">
           <thead className="sticky top-0 glass border-b border-dungeon/30">
             <tr className="text-muted text-left">
-              <th className="px-4 py-3 font-medium">Timestamp</th>
+              <th className="px-4 py-3 font-medium w-8"></th>
+              <th className="px-4 py-3 font-medium">Time</th>
+              <th className="px-4 py-3 font-medium">Type</th>
               <th className="px-4 py-3 font-medium">Item</th>
-              <th className="px-4 py-3 font-medium">Field</th>
-              <th className="px-4 py-3 font-medium">Old</th>
-              <th className="px-4 py-3 font-medium">New</th>
+              <th className="px-4 py-3 font-medium">Summary</th>
+              <th className="px-4 py-3 w-16 font-medium">Raw</th>
             </tr>
           </thead>
           <tbody>
-            {display.map((event, i) => (
-              <tr
-                key={i}
-                className="border-b border-dungeon/15 hover:bg-coin/3 transition-colors"
-              >
-                <td className="px-4 py-2.5 text-muted whitespace-nowrap">
-                  {formatDate(event.timestamp)}
-                </td>
-                <td className="px-4 py-2.5 text-coin font-medium">
-                  <span>{getName(event.item_id)}</span>
-                  <span className="block text-[10px] font-mono text-muted/60">{event.item_id}</span>
-                </td>
-                <td className="px-4 py-2.5 text-body">{event.field}</td>
-                <td className="px-4 py-2.5 font-mono text-red-400">
-                  {String(event.old_value)}
-                </td>
-                <td className="px-4 py-2.5 font-mono text-green-400">
-                  {String(event.new_value)}
-                </td>
-              </tr>
-            ))}
+            {display.map((event, i) => {
+              const changes = extractChanges(event);
+              const itemId = getEventItemId(event);
+              const itemName = (event.item_name as string) || (event.base_item as string) || (itemId ? getName(itemId) : undefined);
+              const mainChange = changes[0];
+              const mainDir = mainChange?.direction ?? "flat";
+              const dirColor = mainDir === "up" ? "text-green-400" : mainDir === "down" ? "text-red-400" : "text-muted";
+              const DirIcon = mainDir === "up" ? TrendingUp : mainDir === "down" ? TrendingDown : Minus;
+              const isExpanded = expandedRows.has(i);
+              const summary = getEventSummary(event, changes);
+              const eventType = (event.type as string) ?? "event";
+              const typeLabel = EVENT_TYPE_LABELS[eventType] ?? eventType;
+
+              return (
+                <>
+                  <tr
+                    key={`row-${i}`}
+                    className="border-b border-dungeon/15 hover:bg-coin/3 transition-colors cursor-pointer"
+                    onClick={() => toggleRow(i)}
+                  >
+                    <td className="px-4 py-2.5">
+                      <DirIcon size={12} className={dirColor} />
+                    </td>
+                    <td className="px-4 py-2.5 text-muted whitespace-nowrap">
+                      {formatDate(event.timestamp as number)}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="text-body">{typeLabel}</span>
+                      <span className="block text-[10px] font-mono text-muted/40">{eventType}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-coin font-medium">
+                      <span>{itemName ?? "(no item)"}</span>
+                      {itemId && <span className="block text-[10px] font-mono text-muted/60">{itemId}</span>}
+                    </td>
+                    <td className={`px-4 py-2.5 font-mono ${dirColor}`}>
+                      {summary}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleRow(i); }}
+                        className="text-muted hover:text-coin text-xs font-medium transition-colors"
+                      >
+                        {isExpanded ? "Hide" : "Show"}
+                      </button>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr key={`detail-${i}`} className="border-b border-dungeon/15 bg-void/30">
+                      <td colSpan={6} className="px-6 py-4">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          {/* Changes table */}
+                          <div>
+                            {changes.length > 0 && (
+                              <>
+                                <p className="text-muted text-[10px] uppercase tracking-wider font-medium mb-2">Changes</p>
+                                <div className="rounded-xl border border-dungeon/20 overflow-hidden mb-3">
+                                  <table className="w-full text-xs">
+                                    <thead>
+                                      <tr className="text-muted bg-void/40">
+                                        <th className="px-3 py-2 text-left font-medium">Field</th>
+                                        <th className="px-3 py-2 text-right font-medium">Old</th>
+                                        <th className="px-3 py-2 text-right font-medium">New</th>
+                                        <th className="px-3 py-2 text-right font-medium">Change</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {changes.map((c) => {
+                                        const cColor = c.direction === "up" ? "text-green-400" : c.direction === "down" ? "text-red-400" : "text-muted";
+                                        return (
+                                          <tr key={c.field} className="border-t border-dungeon/15">
+                                            <td className="px-3 py-2 text-body">{c.label}</td>
+                                            <td className="px-3 py-2 text-right font-mono text-muted">{formatFieldValue(c.field, c.oldVal)}</td>
+                                            <td className={`px-3 py-2 text-right font-mono font-medium ${cColor}`}>{formatFieldValue(c.field, c.newVal)}</td>
+                                            <td className={`px-3 py-2 text-right font-mono ${cColor}`}>
+                                              {c.diff > 0 ? "+" : ""}{formatFieldValue(c.field, Math.abs(c.diff))}
+                                              <span className="block text-[10px] text-muted/60">{c.pct > 0 ? "+" : ""}{c.pct.toFixed(3)}%</span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            )}
+
+                            {/* All fields */}
+                            <p className="text-muted text-[10px] uppercase tracking-wider font-medium mb-2">All Fields</p>
+                            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+                              {Object.entries(event).map(([key, value]) => (
+                                <>
+                                  <span key={`k-${key}`} className="text-muted">{key}</span>
+                                  <span key={`v-${key}`} className="text-body font-mono break-all">
+                                    {key === "timestamp" && typeof value === "number"
+                                      ? `${new Date(value).toLocaleString()} (${value})`
+                                      : key === "price" && typeof value === "number"
+                                        ? `${formatCoins(value)} (${value})`
+                                        : typeof value === "object"
+                                          ? JSON.stringify(value)
+                                          : String(value)}
+                                  </span>
+                                </>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Raw JSON */}
+                          <div>
+                            <p className="text-muted text-[10px] uppercase tracking-wider font-medium mb-2">Raw JSON</p>
+                            <JsonViewer data={event} />
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
           </tbody>
         </table>
         <div ref={logEndRef} />
@@ -267,6 +464,8 @@ function WsTab() {
         <span className={`px-3 py-1 rounded-lg text-xs font-semibold border ${statusColor}`}>
           {state}
         </span>
+
+        <span className="text-muted/50 text-[10px] font-mono hidden sm:inline">/v1/events/subscribe</span>
 
         <button
           onClick={clearMessages}
@@ -383,7 +582,8 @@ function WsTab() {
             {displayMessages.map((msg, i) => {
               const data = typeof msg === "object" ? msg : ({} as Record<string, unknown>);
               const ts = (data as any).timestamp || new Date().toISOString();
-              const ch = (data as any).channel || "unknown";
+              const ch = (data as any).channel || "(no channel)";
+              const eventType = (data as any).data?.type || null;
               const payload = (data as any).data;
               const summary =
                 payload && typeof payload === "object"
@@ -399,7 +599,10 @@ function WsTab() {
                     <td className="px-4 py-2.5 text-muted whitespace-nowrap">
                       {formatDate(ts)}
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-coin font-medium">{ch}</td>
+                    <td className="px-4 py-2.5 font-mono text-coin font-medium">
+                      {ch}
+                      {eventType && <span className="block text-[10px] text-muted/60">{eventType}</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-body truncate max-w-xs">
                       {summary}
                     </td>

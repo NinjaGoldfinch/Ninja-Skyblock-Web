@@ -9,8 +9,9 @@ A modern dashboard for the Ninja SkyBlock API, providing real-time access to Hyp
 - **Tailwind CSS 4** for styling
 - **TanStack React Query** for server state management
 - **React Router** for client-side routing
-- **Recharts** for data visualization
+- **Lightweight Charts** for high-performance financial charts
 - **Lucide React** for icons
+- **Sonner** for toast notifications
 
 ## Getting Started
 
