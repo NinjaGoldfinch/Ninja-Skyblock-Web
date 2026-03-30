@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight } from "lucide-react";
 import { getBazaar } from "@/api/endpoints";
 import { PriceDisplay } from "@/components/ui/PriceDisplay";
 import { ItemIcon } from "@/components/ui/ItemIcon";
@@ -10,6 +10,7 @@ import { DataCard } from "@/components/ui/DataCard";
 import { CardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { StatusBadge } from "@/components/layout/StatusBadge";
+import { useItemNames } from "@/hooks/useItemNames";
 
 type SortOption =
   | "sell-high"
@@ -39,13 +40,7 @@ interface ParsedProduct {
   spreadPercent: number;
 }
 
-function formatProductName(productId: string): string {
-  return productId
-    .replace(/_/g, " ")
-    .replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-}
-
-function parseProduct(raw: BazaarProductRaw): ParsedProduct {
+function parseProduct(raw: BazaarProductRaw, getName: (id: string) => string): ParsedProduct {
   // API names are inverted: buy_summary = orders users sell to, sell_summary = orders users buy from
   // Buy price = highest buy order (buy_summary[0], sorted highest first)
   const buyPrice = raw.buy_summary?.[0]?.pricePerUnit ?? 0;
@@ -63,7 +58,7 @@ function parseProduct(raw: BazaarProductRaw): ParsedProduct {
 
   return {
     product_id: raw.product_id,
-    name: formatProductName(raw.product_id),
+    name: getName(raw.product_id),
     sellPrice,
     buyPrice,
     sellVolume,
@@ -75,9 +70,13 @@ function parseProduct(raw: BazaarProductRaw): ParsedProduct {
   };
 }
 
+const ITEMS_PER_PAGE = 40;
+
 export default function BazaarPage() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortOption>("sell-high");
+  const [page, setPage] = useState(1);
+  const { getName } = useItemNames();
 
   const { data: resp, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ["bazaar"],
@@ -94,7 +93,7 @@ export default function BazaarPage() {
 
     let items: ParsedProduct[] = Object.values(productMap)
       .filter((p): p is BazaarProductRaw => p != null && typeof p === 'object' && 'product_id' in p)
-      .map(parseProduct);
+      .map((p) => parseProduct(p, getName));
 
     if (search.trim()) {
       const term = search.toLowerCase();
@@ -116,7 +115,15 @@ export default function BazaarPage() {
     });
 
     return items;
-  }, [rawData, search, sort]);
+  }, [rawData, search, sort, getName]);
+
+  const totalPages = Math.max(1, Math.ceil(products.length / ITEMS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const paginatedProducts = products.slice((safePage - 1) * ITEMS_PER_PAGE, safePage * ITEMS_PER_PAGE);
+
+  // Reset to page 1 when filters change
+  const handleSearch = (value: string) => { setSearch(value); setPage(1); };
+  const handleSort = (value: SortOption) => { setSort(value); setPage(1); };
 
   return (
     <div className="animate-fade-in">
@@ -139,12 +146,12 @@ export default function BazaarPage() {
             type="text"
             placeholder="Search items..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearch(e.target.value)}
             className="flex-1 bg-nightstone border border-dungeon/50 text-body px-4 py-3 rounded-xl placeholder:text-muted/50 focus:outline-none focus:border-coin/50"
           />
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as SortOption)}
+            onChange={(e) => handleSort(e.target.value as SortOption)}
             className="bg-nightstone border border-dungeon/50 text-body px-4 py-3 rounded-xl focus:outline-none focus:border-coin/50"
           >
             <option value="sell-high">Sell Price: High to Low</option>
@@ -167,72 +174,124 @@ export default function BazaarPage() {
         )}
 
         {!isLoading && !isError && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {products.map((product) => (
-              <Link
-                key={product.product_id}
-                to={`/bazaar/${product.product_id}`}
-                className="block group"
-              >
-                <DataCard className="h-full group-hover:border-coin/30 group-hover:shadow-lg group-hover:shadow-coin/5 transition-all duration-300 group-hover:-translate-y-0.5">
-                  <div className="flex items-center gap-3 mb-4">
-                    <ItemIcon itemId={product.product_id} size={36} />
-                    <h3 className="text-body-light font-medium truncate text-sm flex-1">
-                      {product.name}
-                    </h3>
-                    <LiveDot />
-                  </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {paginatedProducts.map((product) => (
+                <Link
+                  key={product.product_id}
+                  to={`/bazaar/${product.product_id}`}
+                  className="block group"
+                >
+                  <DataCard className="h-full group-hover:border-coin/30 group-hover:shadow-lg group-hover:shadow-coin/5 transition-all duration-300 group-hover:-translate-y-0.5">
+                    <div className="flex items-start gap-3 mb-4">
+                      <ItemIcon itemId={product.product_id} size={36} />
+                      <h3 className="text-body-light font-medium text-sm flex-1 min-w-0 line-clamp-2 leading-snug pt-0.5">
+                        {product.name}
+                      </h3>
+                      <LiveDot />
+                    </div>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted text-xs font-medium flex items-center gap-1.5">
-                        <TrendingUp size={12} className="text-green-400" />
-                        Buy
-                      </span>
-                      {product.buyPrice > 0
-                        ? <PriceDisplay amount={product.buyPrice} size="sm" />
-                        : <span className="text-muted/40 text-sm">No orders</span>
-                      }
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted text-xs font-medium flex items-center gap-1.5">
-                        <TrendingDown size={12} className="text-enchant" />
-                        Sell
-                      </span>
-                      {product.sellPrice > 0
-                        ? <PriceDisplay amount={product.sellPrice} size="sm" />
-                        : <span className="text-muted/40 text-sm">No orders</span>
-                      }
-                    </div>
-                    {(product.buyPrice > 0 && product.sellPrice > 0) && (
-                      <div className="flex justify-between items-center pt-2 border-t border-dungeon/30">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
                         <span className="text-muted text-xs font-medium flex items-center gap-1.5">
-                          {product.spreadPercent >= 0
-                            ? <ArrowUpRight size={12} className="text-green-400" />
-                            : <ArrowDownRight size={12} className="text-damage" />
-                          }
-                          Spread
+                          <TrendingUp size={12} className="text-green-400" />
+                          Buy
                         </span>
-                        <span
-                          className={`text-sm font-mono font-medium ${
-                            product.spreadPercent >= 0 ? "text-green-400" : "text-damage"
-                          }`}
-                        >
-                          {product.spreadPercent >= 0 ? "+" : ""}{product.spreadPercent.toFixed(2)}%
-                        </span>
+                        {product.buyPrice > 0
+                          ? <PriceDisplay amount={product.buyPrice} size="sm" />
+                          : <span className="text-muted/40 text-sm">No orders</span>
+                        }
                       </div>
-                    )}
-                  </div>
-                </DataCard>
-              </Link>
-            ))}
-          </div>
-        )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted text-xs font-medium flex items-center gap-1.5">
+                          <TrendingDown size={12} className="text-enchant" />
+                          Sell
+                        </span>
+                        {product.sellPrice > 0
+                          ? <PriceDisplay amount={product.sellPrice} size="sm" />
+                          : <span className="text-muted/40 text-sm">No orders</span>
+                        }
+                      </div>
+                      {(product.buyPrice > 0 && product.sellPrice > 0) && (
+                        <div className="flex justify-between items-center pt-2 border-t border-dungeon/30">
+                          <span className="text-muted text-xs font-medium flex items-center gap-1.5">
+                            {product.spreadPercent >= 0
+                              ? <ArrowUpRight size={12} className="text-green-400" />
+                              : <ArrowDownRight size={12} className="text-damage" />
+                            }
+                            Spread
+                          </span>
+                          <span
+                            className={`text-sm font-mono font-medium ${
+                              product.spreadPercent >= 0 ? "text-green-400" : "text-damage"
+                            }`}
+                          >
+                            {product.spreadPercent >= 0 ? "+" : ""}{product.spreadPercent.toFixed(2)}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </DataCard>
+                </Link>
+              ))}
+            </div>
 
-        {!isLoading && !isError && products.length === 0 && (
-          <div className="text-center py-16 text-muted">
-            No items found matching your search.
-          </div>
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <button
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className="p-2 rounded-lg border border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
+                  .reduce<(number | "ellipsis")[]>((acc, p, i, arr) => {
+                    if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push("ellipsis");
+                    acc.push(p);
+                    return acc;
+                  }, [])
+                  .map((item, i) =>
+                    item === "ellipsis" ? (
+                      <span key={`e${i}`} className="px-1 text-muted/50">...</span>
+                    ) : (
+                      <button
+                        key={item}
+                        onClick={() => setPage(item)}
+                        className={`min-w-[36px] h-9 rounded-lg text-sm font-medium transition-all ${
+                          item === safePage
+                            ? "bg-coin/10 text-coin border border-coin/30"
+                            : "border border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60"
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    )
+                  )}
+
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className="p-2 rounded-lg border border-dungeon/40 text-muted hover:text-body hover:border-dungeon/60 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={18} />
+                </button>
+
+                <span className="text-muted text-xs ml-3">
+                  {(safePage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(safePage * ITEMS_PER_PAGE, products.length)} of {products.length}
+                </span>
+              </div>
+            )}
+
+            {products.length === 0 && (
+              <div className="text-center py-16 text-muted">
+                No items found matching your search.
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

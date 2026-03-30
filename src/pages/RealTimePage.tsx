@@ -6,6 +6,7 @@ import { DataCard } from "@/components/ui/DataCard";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { JsonViewer } from "@/components/ui/JsonViewer";
 import { formatDate } from "@/lib/format";
+import { useItemNames } from "@/hooks/useItemNames";
 import type { BazaarSseEvent } from "@/types/api";
 
 const CHANNELS = [
@@ -60,6 +61,7 @@ export default function RealTimePage() {
 function SseTab() {
   const { events, connected, paused, connect, disconnect, togglePause, clearEvents } =
     useSseStream();
+  const { getName } = useItemNames();
   const [filter, setFilter] = useState("");
   const [eventsPerSec, setEventsPerSec] = useState(0);
   const prevLengthRef = useRef(0);
@@ -164,8 +166,9 @@ function SseTab() {
                 <td className="px-4 py-2.5 text-muted whitespace-nowrap">
                   {formatDate(event.timestamp)}
                 </td>
-                <td className="px-4 py-2.5 font-mono text-coin font-medium">
-                  {event.item_id}
+                <td className="px-4 py-2.5 text-coin font-medium">
+                  <span>{getName(event.item_id)}</span>
+                  <span className="block text-[10px] font-mono text-muted/60">{event.item_id}</span>
                 </td>
                 <td className="px-4 py-2.5 text-body">{event.field}</td>
                 <td className="px-4 py-2.5 font-mono text-red-400">

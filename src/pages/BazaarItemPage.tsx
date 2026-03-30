@@ -12,6 +12,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { JsonViewer } from "@/components/ui/JsonViewer";
 import { PriceHistoryChart } from "@/components/charts/PriceHistoryChart";
 import { formatNumber } from "@/lib/format";
+import { useItemNames } from "@/hooks/useItemNames";
 import type { BazaarHistoryPoint } from "@/types/api";
 
 type TimeRange = "1h" | "6h" | "24h" | "7d";
@@ -32,6 +33,7 @@ interface OrderEntry {
 // Raw API response — field names are inverted from the user's perspective
 interface V2BazaarItemRaw {
   item_id: string;
+  display_name?: string;
   instant_buy_price: number;
   instant_sell_price: number;
   avg_buy_price: number;
@@ -96,15 +98,10 @@ function deriveItemData(raw: V2BazaarItemRaw) {
   };
 }
 
-function formatProductName(productId: string): string {
-  return productId
-    .replace(/_/g, " ")
-    .replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-}
-
 export default function BazaarItemPage() {
   const { itemId } = useParams<{ itemId: string }>();
   const [timeRange, setTimeRange] = useState<TimeRange>("24h");
+  const { getName } = useItemNames();
 
   const {
     data: itemResp,
@@ -178,7 +175,7 @@ export default function BazaarItemPage() {
             <ItemIcon itemId={item.itemId} size={48} />
             <div>
               <h1 className="font-display text-4xl text-gradient-coin font-bold">
-                {formatProductName(item.itemId)}
+                {rawItem?.display_name ?? getName(item.itemId)}
               </h1>
               <span className="text-muted font-mono text-xs bg-dungeon/30 px-2 py-0.5 rounded-md">{item.itemId}</span>
             </div>
