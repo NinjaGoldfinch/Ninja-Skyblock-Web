@@ -1,7 +1,9 @@
+import type { ZodType } from 'zod'
 import type { ApiEnvelope, ApiResponse, AppError } from '@/types/api'
 import { getApiBaseUrl } from '@/lib/settings'
 import { buildAuthHeaders, generateHmacSignature } from '@/lib/auth'
 import { getSettings } from '@/lib/settings'
+import { validateResponse } from '@/lib/validate'
 
 export class ApiRequestError extends Error {
   code: string
@@ -12,6 +14,18 @@ export class ApiRequestError extends Error {
     this.name = 'ApiRequestError'
     this.code = error.code
     this.status = error.status
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const { requestTimeout } = getSettings()
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(requestTimeout) })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new ApiRequestError({ code: 'TIMEOUT', message: 'Request timed out', status: 0 })
+    }
+    throw err
   }
 }
 
@@ -37,7 +51,8 @@ async function buildHeaders(body?: string): Promise<Record<string, string>> {
 
 export async function apiGet<T>(
   path: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
+  schema?: ZodType<T>
 ): Promise<ApiResponse<T>> {
   const base = getApiBaseUrl()
   const url = new URL(path, base)
@@ -48,7 +63,7 @@ export async function apiGet<T>(
   }
 
   const headers = await buildHeaders()
-  const res = await fetch(url.toString(), { headers })
+  const res = await fetchWithTimeout(url.toString(), { headers })
 
   if (!res.ok) {
     let error: AppError
@@ -79,8 +94,10 @@ export async function apiGet<T>(
     })
   }
 
+  const data = schema ? validateResponse(envelope.data, schema) : envelope.data
+
   return {
-    data: envelope.data,
+    data,
     meta: envelope.meta,
   }
 }
@@ -94,7 +111,7 @@ export async function apiPost<T>(
   const bodyStr = body ? JSON.stringify(body) : undefined
   const headers = await buildHeaders(bodyStr)
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithTimeout(url.toString(), {
     method: 'POST',
     headers,
     body: bodyStr,
@@ -120,7 +137,7 @@ export async function apiDelete<T>(path: string): Promise<ApiResponse<T>> {
   const url = new URL(path, base)
   const headers = await buildHeaders()
 
-  const res = await fetch(url.toString(), { method: 'DELETE', headers })
+  const res = await fetchWithTimeout(url.toString(), { method: 'DELETE', headers })
 
   if (!res.ok) {
     let error: AppError

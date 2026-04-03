@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { AreaSeries, HistogramSeries } from "lightweight-charts";
 import type { ISeriesApi } from "lightweight-charts";
 import {
   ArrowLeft, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
-  ShoppingCart, Store, Search, Tag, BarChart3,
+  ShoppingCart, Store, Search, Tag, BarChart3, Star, Bell, Trash2, X,
 } from "lucide-react";
 import { ItemIcon } from "@/components/ui/ItemIcon";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -16,6 +16,7 @@ import { PriceStatsBar } from "@/components/charts/PriceStatsBar";
 import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { JsonViewer } from "@/components/ui/JsonViewer";
+import { ProfitCalculator } from "@/components/bazaar/ProfitCalculator";
 import { useChart } from "@/hooks/useChart";
 import { useChartAnnotations } from "@/hooks/useChartAnnotations";
 import { computePriceStats } from "@/lib/chartStats";
@@ -24,6 +25,9 @@ import { getSettings, saveSettings } from "@/lib/settings";
 import { useItemNames } from "@/hooks/useItemNames";
 import { useBazaarHistory } from "@/hooks/useBazaarHistory";
 import { useSseChangeLog } from "@/hooks/useSseChangeLog";
+import { useFavorites } from "@/hooks/useFavorites";
+import { usePriceAlerts, type PriceAlert } from "@/hooks/usePriceAlerts";
+import { AlertHistoryPanel } from "@/components/alerts/AlertHistoryPanel";
 import type { ItemV2 } from "@/types/api";
 
 type TimeRange = "1h" | "6h" | "24h" | "7d" | "30d";
@@ -49,37 +53,43 @@ interface V2BazaarItemRaw {
   sell_orders: number;
   buy_moving_week: number;
   sell_moving_week: number;
+  margin?: number;
+  margin_percent?: number;
+  tax_adjusted_margin?: number;
   top_buy_orders: OrderEntry[];
   top_sell_orders: OrderEntry[];
 }
 
 /** Derive display values from the V2 order book.
- *  V2 API uses Hypixel's internal naming (inverted from user perspective):
- *    top_sell_orders = sell orders on the book = what user buys from (cheapest first)
- *    top_buy_orders  = buy orders on the book = what user sells to (highest first)
- *    instant_buy_price = cheapest sell order price (what user pays to instant-buy)
- *    instant_sell_price = highest buy order price (what user gets to instant-sell) */
+ *  API fields map directly to UI labels — no inversion needed:
+ *    top_buy_orders  = buy orders (highest first) → "Buy Price" card
+ *    top_sell_orders = sell orders (cheapest first) → "Sell Price" card
+ *    buy_volume = volume on the buy side, sell_volume = volume on the sell side */
 function deriveItemData(raw: V2BazaarItemRaw) {
-  const buyFromOrders = raw.top_sell_orders ?? [];
-  const sellToOrders = raw.top_buy_orders ?? [];
+  const buyOrders = raw.top_buy_orders ?? [];
+  const sellOrders = raw.top_sell_orders ?? [];
 
-  const buyPrice = raw.instant_buy_price ?? buyFromOrders[0]?.price_per_unit ?? 0;
-  const sellPrice = raw.instant_sell_price ?? sellToOrders[0]?.price_per_unit ?? 0;
+  const buyPrice = buyOrders.length > 0 ? (buyOrders[0]?.price_per_unit ?? 0) : 0;
+  const sellPrice = sellOrders.length > 0 ? (sellOrders[0]?.price_per_unit ?? 0) : 0;
 
   const { spread, spreadPercent } = calcSpread(buyPrice, sellPrice);
 
-  const buyOrderCount = buyFromOrders.reduce((sum, o) => sum + o.orders, 0);
-  const buyItemCount = buyFromOrders.reduce((sum, o) => sum + o.amount, 0);
-
-  const sellOrderCount = sellToOrders.reduce((sum, o) => sum + o.orders, 0);
-  const sellItemCount = sellToOrders.reduce((sum, o) => sum + o.amount, 0);
+  const buyOrderCount = buyOrders.reduce((sum, o) => sum + o.orders, 0);
+  const buyItemCount = buyOrders.reduce((sum, o) => sum + o.amount, 0);
+  const sellOrderCount = sellOrders.reduce((sum, o) => sum + o.orders, 0);
+  const sellItemCount = sellOrders.reduce((sum, o) => sum + o.amount, 0);
 
   const avgBuyPrice = buyItemCount > 0
-    ? buyFromOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / buyItemCount
+    ? buyOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / buyItemCount
     : 0;
   const avgSellPrice = sellItemCount > 0
-    ? sellToOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / sellItemCount
+    ? sellOrders.reduce((sum, o) => sum + o.price_per_unit * o.amount, 0) / sellItemCount
     : 0;
+
+  // Margin: positive when selling is more profitable than buying
+  const margin = sellPrice - buyPrice;
+  const marginPercent = buyPrice > 0 ? (margin / buyPrice) * 100 : 0;
+  const taxAdjustedMargin = margin - (sellPrice * 0.01125);
 
   return {
     itemId: raw.item_id,
@@ -95,8 +105,11 @@ function deriveItemData(raw: V2BazaarItemRaw) {
     avgSellPrice,
     buyVolume: raw.buy_volume ?? 0,
     sellVolume: raw.sell_volume ?? 0,
-    topBuyOrders: buyFromOrders,
-    topSellOrders: sellToOrders,
+    margin,
+    marginPercent,
+    taxAdjustedMargin,
+    topBuyOrders: buyOrders,
+    topSellOrders: sellOrders,
   };
 }
 
@@ -234,65 +247,69 @@ function PriceChart({
   showAnnotations: boolean;
   stats: import("@/lib/chartStats").PriceStats | null;
 }) {
-  const { containerRef, chartRef } = useChart();
+  const { containerRef, chartRef, chartReady } = useChart();
   const buySeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const sellSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const seriesCreatedRef = useRef(false);
+  const prevChartReadyRef = useRef(chartReady);
 
   const { datapoints, loading, error } = useBazaarHistory(itemId, range);
 
   useChartAnnotations(chartRef, buySeriesRef, sellSeriesRef, stats, showAnnotations);
 
-  useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart) return;
-
-    const colors = getSeriesColors();
-
-    const buySeries = chart.addSeries(AreaSeries, {
-      lineColor: colors.buyLine,
-      topColor: colors.buyFillTop,
-      bottomColor: colors.buyFillBot,
-      lineWidth: 2,
-      title: "Buy Price",
-      priceFormat: { type: "custom", formatter: (p: number) => formatCoins(p) },
-    });
-
-    const sellSeries = chart.addSeries(AreaSeries, {
-      lineColor: colors.sellLine,
-      topColor: colors.sellFillTop,
-      bottomColor: colors.sellFillBot,
-      lineWidth: 2,
-      title: "Sell Price",
-      priceFormat: { type: "custom", formatter: (p: number) => formatCoins(p) },
-    });
-
-    const volSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "",
-      lastValueVisible: false,
-    });
-
-    chart.priceScale("").applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
-
-    buySeriesRef.current = buySeries;
-    sellSeriesRef.current = sellSeries;
-    volSeriesRef.current = volSeries;
-
-    return () => {
-      buySeriesRef.current = null;
-      sellSeriesRef.current = null;
-      volSeriesRef.current = null;
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
   const prevLenRef = useRef(0);
   const prevRangeRef = useRef(range);
   useEffect(() => {
+    // Reset series refs when chart instance changes (remount)
+    if (prevChartReadyRef.current !== chartReady) {
+      prevChartReadyRef.current = chartReady;
+      seriesCreatedRef.current = false;
+      buySeriesRef.current = null;
+      sellSeriesRef.current = null;
+      volSeriesRef.current = null;
+      prevLenRef.current = 0;
+    }
+
+    const chart = chartRef.current;
+    if (!chart || !datapoints.length) return;
+
+    // Create series lazily on first data arrival
+    if (!seriesCreatedRef.current) {
+      const colors = getSeriesColors();
+
+      buySeriesRef.current = chart.addSeries(AreaSeries, {
+        lineColor: colors.buyLine,
+        topColor: colors.buyFillTop,
+        bottomColor: colors.buyFillBot,
+        lineWidth: 2,
+        title: "Buy Price",
+        priceFormat: { type: "custom", formatter: (p: number) => formatCoins(p) },
+      });
+
+      sellSeriesRef.current = chart.addSeries(AreaSeries, {
+        lineColor: colors.sellLine,
+        topColor: colors.sellFillTop,
+        bottomColor: colors.sellFillBot,
+        lineWidth: 2,
+        title: "Sell Price",
+        priceFormat: { type: "custom", formatter: (p: number) => formatCoins(p) },
+      });
+
+      volSeriesRef.current = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: "volume" },
+        priceScaleId: "",
+        lastValueVisible: false,
+      });
+
+      chart.priceScale("").applyOptions({
+        scaleMargins: { top: 0.8, bottom: 0 },
+      });
+
+      seriesCreatedRef.current = true;
+    }
+
     if (!buySeriesRef.current || !sellSeriesRef.current || !volSeriesRef.current) return;
-    if (!datapoints.length) return;
 
     const colors = getSeriesColors();
     const prevLen = prevLenRef.current;
@@ -304,8 +321,8 @@ function PriceChart({
     if (prevLen > 0 && datapoints.length === prevLen + 1 && !rangeChanged) {
       const d = datapoints[datapoints.length - 1]!;
       const time = toLocalChartTime(d.timestamp);
-      buySeriesRef.current.update({ time, value: d.instant_buy_price });
-      sellSeriesRef.current.update({ time, value: d.instant_sell_price });
+      buySeriesRef.current.update({ time, value: d.instant_buy_price || 0.01 });
+      sellSeriesRef.current.update({ time, value: d.instant_sell_price || 0.01 });
       volSeriesRef.current.update({
         time,
         value: d.buy_volume + d.sell_volume,
@@ -328,30 +345,26 @@ function PriceChart({
     buySeriesRef.current.applyOptions({ autoscaleInfoProvider: provider });
     sellSeriesRef.current.applyOptions({ autoscaleInfoProvider: provider });
 
-    const buyData = datapoints.map((d) => ({
+    buySeriesRef.current.setData(datapoints.map((d) => ({
       time: toLocalChartTime(d.timestamp),
-      value: d.instant_buy_price,
-    }));
+      value: d.instant_buy_price || 0.01,
+    })));
 
-    const sellData = datapoints.map((d) => ({
+    sellSeriesRef.current.setData(datapoints.map((d) => ({
       time: toLocalChartTime(d.timestamp),
-      value: d.instant_sell_price,
-    }));
+      value: d.instant_sell_price || 0.01,
+    })));
 
-    const volData = datapoints.map((d) => ({
+    volSeriesRef.current.setData(datapoints.map((d) => ({
       time: toLocalChartTime(d.timestamp),
       value: d.buy_volume + d.sell_volume,
       color: d.buy_volume >= d.sell_volume ? colors.volBuy : colors.volSell,
-    }));
-
-    buySeriesRef.current.setData(buyData);
-    sellSeriesRef.current.setData(sellData);
-    volSeriesRef.current.setData(volData);
+    })));
 
     if (isInitialLoad || rangeChanged) {
-      chartRef.current?.timeScale().fitContent();
+      chart.timeScale().fitContent();
     }
-  }, [datapoints, range]);
+  }, [datapoints, range, chartReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <ErrorState error={error instanceof Error ? error : new Error("Failed to load history")} />;
 
@@ -384,6 +397,8 @@ export default function BazaarItemPage() {
   const [showAnnotations, setShowAnnotations] = useState(() => getSettings().showChartAnnotations);
   const [showStats, setShowStats] = useState(() => getSettings().showStatsBar);
   const { getName } = useItemNames();
+  const { isFavorite, toggle: toggleFavorite } = useFavorites();
+  const { add: addAlert, remove: removeAlert, toggle: toggleAlertEnabled, forItem: alertsForItem } = usePriceAlerts();
 
   const toggleAnnotations = () => {
     setShowAnnotations((v) => { saveSettings({ showChartAnnotations: !v }); return !v; });
@@ -463,21 +478,44 @@ export default function BazaarItemPage() {
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
       {/* Back + header */}
       <div className="space-y-4">
-        <Link
-          to="/bazaar"
+        <button
+          onClick={() => navigate(-1)}
           className="inline-flex items-center gap-2 text-muted hover:text-coin transition-colors text-sm group"
         >
           <ArrowLeft size={16} className="group-hover:-translate-x-0.5 transition-transform" />
-          Back to Bazaar
-        </Link>
+          Back
+        </button>
 
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <ItemIcon itemId={item.itemId} size={48} />
             <div>
-              <h1 className="font-display text-4xl text-gradient-coin font-bold">
-                {rawItem?.display_name ?? getName(item.itemId)}
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="font-display text-4xl text-gradient-coin font-bold">
+                  {rawItem?.display_name ?? getName(item.itemId)}
+                </h1>
+                <button
+                  onClick={() => toggleFavorite(item.itemId)}
+                  className={`p-1.5 rounded-lg transition-all ${
+                    isFavorite(item.itemId)
+                      ? "text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20"
+                      : "text-muted/30 hover:text-muted/60"
+                  }`}
+                  aria-label={isFavorite(item.itemId) ? "Remove from watchlist" : "Add to watchlist"}
+                >
+                  <Star size={18} className={isFavorite(item.itemId) ? "fill-yellow-400" : ""} />
+                </button>
+                <AlertButton
+                  itemId={item.itemId}
+                  itemName={rawItem?.display_name ?? getName(item.itemId)}
+                  buyPrice={item.buyPrice}
+                  sellPrice={item.sellPrice}
+                  alerts={alertsForItem(item.itemId)}
+                  onAdd={addAlert}
+                  onRemove={removeAlert}
+                  onToggle={toggleAlertEnabled}
+                />
+              </div>
               <div className="flex items-center gap-1.5 mt-0.5 group/id">
                 <span className="text-muted font-mono text-xs bg-dungeon/30 px-2 py-0.5 rounded-md truncate max-w-48" title={item.itemId}>{item.itemId}</span>
                 <div className="opacity-0 group-hover/id:opacity-100 transition-opacity">
@@ -562,9 +600,9 @@ export default function BazaarItemPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                  item.spreadPercent >= 0 ? "bg-green-500/10" : "bg-damage/10"
+                  item.marginPercent >= 0 ? "bg-green-500/10" : "bg-damage/10"
                 }`}>
-                  {item.spreadPercent >= 0
+                  {item.marginPercent >= 0
                     ? <ArrowUpRight size={16} className="text-green-400" />
                     : <ArrowDownRight size={16} className="text-damage" />
                   }
@@ -572,25 +610,36 @@ export default function BazaarItemPage() {
                 <span className="text-sm font-medium text-body">Flip Profit</span>
               </div>
               <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded-md ${
-                item.spreadPercent >= 0
+                item.marginPercent >= 0
                   ? "text-green-400 bg-green-500/10"
                   : "text-damage bg-damage/10"
               }`}>
-                {item.spreadPercent >= 0 ? "+" : ""}{item.spreadPercent.toFixed(2)}%
+                {item.marginPercent >= 0 ? "+" : ""}{item.marginPercent.toFixed(2)}%
               </span>
             </div>
-            <PriceDisplay amount={Math.abs(item.spread)} size="lg" />
+            <div className="space-y-2">
+              <div>
+                <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">Raw Margin</p>
+                <PriceDisplay amount={Math.abs(item.margin)} size="lg" />
+              </div>
+              <div>
+                <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">After Tax (1.125%)</p>
+                <p className={`font-mono text-lg font-semibold ${item.taxAdjustedMargin >= 0 ? "text-green-400" : "text-damage"}`}>
+                  {formatCoins(Math.abs(item.taxAdjustedMargin))}
+                </p>
+              </div>
+            </div>
             <div className="mt-4 pt-3 border-t border-dungeon/20 grid grid-cols-2 gap-3">
               <div>
                 <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">Per Stack (64)</p>
-                <p className={`font-mono text-sm font-medium ${item.spread >= 0 ? "text-green-400" : "text-damage"}`}>
-                  {formatCoins(Math.abs(item.spread * 64))}
+                <p className={`font-mono text-sm font-medium ${item.taxAdjustedMargin >= 0 ? "text-green-400" : "text-damage"}`}>
+                  {formatCoins(Math.abs(item.taxAdjustedMargin * 64))}
                 </p>
               </div>
               <div>
                 <p className="text-muted text-[10px] uppercase tracking-wider mb-0.5">Per 1k</p>
-                <p className={`font-mono text-sm font-medium ${item.spread >= 0 ? "text-green-400" : "text-damage"}`}>
-                  {formatCoins(Math.abs(item.spread * 1000))}
+                <p className={`font-mono text-sm font-medium ${item.taxAdjustedMargin >= 0 ? "text-green-400" : "text-damage"}`}>
+                  {formatCoins(Math.abs(item.taxAdjustedMargin * 1000))}
                 </p>
               </div>
             </div>
@@ -635,7 +684,7 @@ export default function BazaarItemPage() {
             <div className="flex items-center justify-between">
               <span className="text-muted text-[10px] uppercase tracking-wider">Ratio</span>
               <span className="text-body font-mono text-xs">
-                {item.sellVolume > 0 ? (item.buyVolume / item.sellVolume).toFixed(2) : "--"}x
+                {item.sellVolume > 0 ? `${(item.buyVolume / item.sellVolume).toFixed(2)}x` : "N/A"}
               </span>
             </div>
           </div>
@@ -775,6 +824,12 @@ export default function BazaarItemPage() {
         </DataCard>
       </div>
 
+      {/* Profit Calculator */}
+      <ProfitCalculator buyPrice={item.buyPrice} sellPrice={item.sellPrice} />
+
+      {/* Alert History */}
+      <AlertHistoryPanel itemId={item.itemId} />
+
       {/* SSE Change Log */}
       {changeLog.length > 0 && (
         <DataCard title="SSE Change Log">
@@ -832,6 +887,155 @@ export default function BazaarItemPage() {
 
       {/* Raw JSON (reflects SSE patches) */}
       <JsonViewer data={rawItem} title="Raw API Response (Live)" />
+    </div>
+  );
+}
+
+// --- Alert Button / Popover ---
+
+function AlertButton({
+  itemId,
+  itemName,
+  buyPrice,
+  sellPrice,
+  alerts,
+  onAdd,
+  onRemove,
+  onToggle,
+}: {
+  itemId: string;
+  itemName: string;
+  buyPrice: number;
+  sellPrice: number;
+  alerts: PriceAlert[];
+  onAdd: (alert: Omit<PriceAlert, 'id' | 'createdAt' | 'enabled'>) => void;
+  onRemove: (id: string) => void;
+  onToggle: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [field, setField] = useState<'instant_buy_price' | 'instant_sell_price'>('instant_buy_price');
+  const [condition, setCondition] = useState<'above' | 'below'>('above');
+  const [threshold, setThreshold] = useState('');
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Pre-fill threshold when opening
+  useEffect(() => {
+    if (open) {
+      const price = field === 'instant_buy_price' ? buyPrice : sellPrice;
+      setThreshold(price > 0 ? Math.round(price * (condition === 'above' ? 1.1 : 0.9)).toString() : '');
+    }
+  }, [open, field, condition, buyPrice, sellPrice]);
+
+  const handleAdd = () => {
+    const val = parseFloat(threshold);
+    if (!val || val <= 0) return;
+    onAdd({ itemId, itemName, field, condition, threshold: val });
+    setThreshold('');
+  };
+
+  return (
+    <div className="relative" ref={popoverRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`p-1.5 rounded-lg transition-all ${
+          alerts.length > 0
+            ? "text-coin bg-coin/10 hover:bg-coin/20"
+            : "text-muted/30 hover:text-muted/60"
+        }`}
+        aria-label="Price alerts"
+      >
+        <Bell size={18} />
+        {alerts.filter((a) => a.enabled).length > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-coin text-void text-[9px] font-bold rounded-full flex items-center justify-center">
+            {alerts.filter((a) => a.enabled).length}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-2 z-50 w-80 glass rounded-xl border border-dungeon/50 shadow-xl p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium text-body">Price Alerts</h4>
+            <button onClick={() => setOpen(false)} className="text-muted hover:text-body p-0.5">
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* Existing alerts */}
+          {alerts.length > 0 && (
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {alerts.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 text-xs bg-dungeon/20 rounded-lg px-3 py-2">
+                  <button
+                    onClick={() => onToggle(a.id)}
+                    className={`w-3 h-3 rounded-full border-2 shrink-0 transition-colors ${
+                      a.enabled ? "bg-green-400 border-green-400" : "border-muted/40"
+                    }`}
+                  />
+                  <span className={`flex-1 font-mono ${a.enabled ? "text-body" : "text-muted/50"}`}>
+                    {a.field === 'instant_buy_price' ? 'Buy' : 'Sell'}{' '}
+                    {a.condition === 'above' ? '≥' : '≤'}{' '}
+                    {a.threshold.toLocaleString()}
+                  </span>
+                  <button onClick={() => onRemove(a.id)} className="text-muted/40 hover:text-damage transition-colors">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* New alert form */}
+          <div className="space-y-3 pt-2 border-t border-dungeon/30">
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={field}
+                onChange={(e) => setField(e.target.value as typeof field)}
+                className="bg-void/40 border border-dungeon/40 text-body text-xs px-2 py-1.5 rounded-lg focus:outline-none focus:border-coin/50"
+              >
+                <option value="instant_buy_price">Buy Price</option>
+                <option value="instant_sell_price">Sell Price</option>
+              </select>
+              <select
+                value={condition}
+                onChange={(e) => setCondition(e.target.value as typeof condition)}
+                className="bg-void/40 border border-dungeon/40 text-body text-xs px-2 py-1.5 rounded-lg focus:outline-none focus:border-coin/50"
+              >
+                <option value="above">Goes above</option>
+                <option value="below">Goes below</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={threshold}
+                onChange={(e) => setThreshold(e.target.value)}
+                placeholder="Threshold..."
+                className="flex-1 bg-void/40 border border-dungeon/40 text-body text-xs font-mono px-3 py-1.5 rounded-lg placeholder:text-muted/40 focus:outline-none focus:border-coin/50"
+                onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+              />
+              <button
+                onClick={handleAdd}
+                className="px-3 py-1.5 bg-coin/10 text-coin text-xs font-medium rounded-lg border border-coin/30 hover:bg-coin/20 transition-all"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

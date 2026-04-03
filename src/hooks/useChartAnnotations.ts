@@ -72,9 +72,9 @@ export function useChartAnnotations(
       });
     }
 
-    if (stats.highBuy > 0 && stats.highBuy !== stats.currentBuy) {
+    if (stats.highBuyTimestamp > 0 && stats.highBuy !== stats.currentBuy) {
       addLine(buySeries, {
-        price: stats.highBuy,
+        price: stats.highBuy || 0.01,
         color: c.buyDim,
         lineWidth: 1,
         lineStyle: 3,
@@ -83,9 +83,31 @@ export function useChartAnnotations(
       });
     }
 
-    if (stats.lowSell > 0 && stats.lowSell !== stats.currentSell) {
+    if (stats.lowBuyTimestamp > 0 && stats.lowBuy !== stats.currentBuy) {
+      addLine(buySeries, {
+        price: stats.lowBuy || 0.01,
+        color: c.buyDim,
+        lineWidth: 1,
+        lineStyle: 3,
+        axisLabelVisible: false,
+        title: "Low",
+      });
+    }
+
+    if (stats.highSellTimestamp > 0 && stats.highSell !== stats.currentSell) {
       addLine(sellSeries, {
-        price: stats.lowSell,
+        price: stats.highSell || 0.01,
+        color: c.sellDim,
+        lineWidth: 1,
+        lineStyle: 3,
+        axisLabelVisible: false,
+        title: "High",
+      });
+    }
+
+    if (stats.lowSellTimestamp > 0 && stats.lowSell !== stats.currentSell) {
+      addLine(sellSeries, {
+        price: stats.lowSell || 0.01,
         color: c.sellDim,
         lineWidth: 1,
         lineStyle: 3,
@@ -104,7 +126,7 @@ export function useChartAnnotations(
         color: c.buy,
         shape: "circle",
         size: 1,
-        text: `High ${formatCoins(stats.highBuy)}`,
+        text: `High ${stats.highBuy === 0 ? "0" : formatCoins(stats.highBuy)}`,
       });
     }
     if (stats.lowBuyTimestamp > 0) {
@@ -114,7 +136,7 @@ export function useChartAnnotations(
         color: c.buyMuted,
         shape: "circle",
         size: 1,
-        text: `Low ${formatCoins(stats.lowBuy)}`,
+        text: `Low ${stats.lowBuy === 0 ? "0" : formatCoins(stats.lowBuy)}`,
       });
     }
     buyMarkers.sort((a, b) => (a.time as number) - (b.time as number));
@@ -133,7 +155,7 @@ export function useChartAnnotations(
         color: c.sell,
         shape: "circle",
         size: 1,
-        text: `High ${formatCoins(stats.highSell)}`,
+        text: `High ${stats.highSell === 0 ? "0" : formatCoins(stats.highSell)}`,
       });
     }
     if (stats.lowSellTimestamp > 0) {
@@ -143,7 +165,7 @@ export function useChartAnnotations(
         color: c.sellMuted,
         shape: "circle",
         size: 1,
-        text: `Low ${formatCoins(stats.lowSell)}`,
+        text: `Low ${stats.lowSell === 0 ? "0" : formatCoins(stats.lowSell)}`,
       });
     }
     sellMarkers.sort((a, b) => (a.time as number) - (b.time as number));

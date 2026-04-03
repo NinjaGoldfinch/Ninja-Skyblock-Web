@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from '@/lib/settings'
+import { getApiBaseUrl, getSettings } from '@/lib/settings'
 import type { WsEvent, WsMessage } from '@/types/api'
 
 type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
@@ -30,12 +30,17 @@ class WebSocketManager {
 
     this._intentionalClose = false
     const base = getApiBaseUrl().replace(/^http/, 'ws')
-    const url = `${base}/v1/events/subscribe`
+    const url = new URL(`${base}/v1/events/subscribe`)
+
+    const settings = getSettings()
+    if (settings.authMode === 'apikey' && settings.apiKey) {
+      url.searchParams.set('api_key', settings.apiKey)
+    }
 
     this.setState('connecting')
 
     try {
-      this.ws = new WebSocket(url)
+      this.ws = new WebSocket(url.toString())
     } catch {
       this.setState('disconnected')
       this.scheduleReconnect()

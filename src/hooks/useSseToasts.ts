@@ -4,9 +4,14 @@ import { subscribeSseUpdates } from '@/lib/sseEventBus'
 import { useItemNames } from '@/hooks/useItemNames'
 
 const THROTTLE_MS = 5_000
-const TOAST_DURATION = 8_000
+const TOAST_DURATION = 6_000
 const TOAST_ID = 'sse-bazaar-update'
-const MAX_DISPLAY_ITEMS = 6
+const MAX_DISPLAY_ITEMS = 3
+
+function isBazaarPage(): boolean {
+  const path = window.location.pathname
+  return path === '/bazaar' || path.startsWith('/bazaar/')
+}
 
 export function useSseToasts() {
   const { getName } = useItemNames()
@@ -23,6 +28,9 @@ export function useSseToasts() {
       timerRef.current = 0
       if (items.length === 0) return
 
+      // Only show bazaar toasts on bazaar pages
+      if (!isBazaarPage()) return
+
       // On a specific item page, filter to that item
       let pageItemId: string | null = null
       const pathMatch = window.location.pathname.match(/^\/bazaar\/([^/]+)$/)
@@ -32,7 +40,6 @@ export function useSseToasts() {
 
       if (pageItemId) {
         if (!items.includes(pageItemId)) {
-          // Other items updated but not the one we're viewing
           lastToastRef.current = Date.now()
           toast(
             createElement('div', { className: 'text-sm text-muted' },
@@ -55,15 +62,20 @@ export function useSseToasts() {
       const remaining = items.length - displayItems.length
 
       toast(
-        createElement('div', { className: 'space-y-1.5' },
-          createElement('div', { className: 'font-medium text-sm text-body' },
-            `Bazaar updated \u00b7 ${items.length} item${items.length === 1 ? '' : 's'}`
+        createElement('div', { className: 'space-y-2' },
+          createElement('div', { className: 'flex items-center gap-2' },
+            createElement('span', {
+              className: 'inline-flex h-5 w-5 items-center justify-center rounded-md bg-enchant/10 text-enchant',
+            }, createElement('span', { className: 'text-[10px] font-bold' }, '\u2191')),
+            createElement('span', { className: 'font-medium text-sm text-body-light' },
+              `Bazaar updated \u00b7 ${items.length} item${items.length === 1 ? '' : 's'}`
+            ),
           ),
           createElement('div', { className: 'flex flex-wrap gap-1.5' },
             ...displayItems.map((id) =>
               createElement('span', {
                 key: id,
-                className: 'inline-flex items-center px-2 py-0.5 rounded-md bg-coin/10 text-coin text-[11px] font-mono border border-coin/15',
+                className: 'inline-flex items-center px-2 py-0.5 rounded-md bg-coin/8 text-coin-light text-[11px] font-mono border border-coin/10 transition-colors',
               }, gn(id))
             ),
             remaining > 0

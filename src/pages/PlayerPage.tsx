@@ -33,7 +33,7 @@ export default function PlayerPage() {
     enabled: !!paramUsername && !paramId,
   });
 
-  const uuid = paramId ?? resolvedResp?.data?.uuid;
+  const uuid = paramId ?? resolvedResp?.data?.id;
 
   const {
     data: profilesResp,
@@ -46,7 +46,10 @@ export default function PlayerPage() {
     enabled: !!uuid,
   });
 
-  const profiles: ProfileSummary[] | undefined = profilesResp?.data;
+  const rawProfiles = profilesResp?.data as { profiles?: ProfileSummary[] } | ProfileSummary[] | undefined;
+  const profiles: ProfileSummary[] | undefined = Array.isArray(rawProfiles)
+    ? rawProfiles
+    : rawProfiles?.profiles;
 
   useEffect(() => {
     if (profiles && profiles.length > 0 && !selectedProfileId) {
@@ -201,7 +204,7 @@ export default function PlayerPage() {
                   <div className="flex justify-between text-sm mb-1.5">
                     <span className="text-body capitalize font-medium">{name}</span>
                     <span className="text-muted font-mono text-xs">
-                      {skill.level}/{skill.maxLevel} &middot; {skill.xp.toLocaleString()} XP
+                      Lv {skill.level}{skill.maxLevel ? `/${skill.maxLevel}` : ''} &middot; {skill.xp.toLocaleString()} XP
                     </span>
                   </div>
                   <div className="h-2 bg-dungeon/40 rounded-full overflow-hidden">
@@ -236,20 +239,32 @@ export default function PlayerPage() {
               <p className="text-muted text-xs font-mono">{(profile.dungeons?.catacombs_xp ?? 0).toLocaleString()} XP</p>
             </div>
             <div className="space-y-3">
-              {Object.entries(profile.dungeons?.classes ?? {}).map(([name, cls]) => (
-                <div key={name}>
-                  <div className="flex justify-between text-sm mb-1.5">
-                    <span className="text-body capitalize font-medium">{name}</span>
-                    <span className="text-muted font-mono text-xs">Lv {cls.level}</span>
+              {(() => {
+                const dungeons = profile.dungeons;
+                if (!dungeons) return null;
+                // Handle both class_levels (Record<string,number>) and classes (Record<string,DungeonClass>)
+                const entries: [string, { level: number; progress?: number }][] = dungeons.classes
+                  ? Object.entries(dungeons.classes)
+                  : dungeons.class_levels
+                    ? Object.entries(dungeons.class_levels).map(([k, v]) => [k, { level: v as number }])
+                    : [];
+                return entries.map(([name, cls]) => (
+                  <div key={name}>
+                    <div className="flex justify-between text-sm mb-1.5">
+                      <span className="text-body capitalize font-medium">{name}</span>
+                      <span className="text-muted font-mono text-xs">Lv {cls.level}</span>
+                    </div>
+                    {cls.progress != null && (
+                      <div className="h-2 bg-dungeon/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-enchant to-enchant-light rounded-full transition-all duration-500"
+                          style={{ width: `${(cls.progress * 100).toFixed(1)}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <div className="h-2 bg-dungeon/40 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-enchant to-enchant-light rounded-full transition-all duration-500"
-                      style={{ width: `${(cls.progress * 100).toFixed(1)}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
           </DataCard>
 

@@ -1,12 +1,12 @@
 import { apiGet, apiPost, apiDelete } from './client'
+import { bazaarBulkResponseSchema, bazaarHistoryV2Schema, healthResponseSchema } from '@/lib/schemas'
 import type {
-  HealthResponse,
   ProfileV2,
   ProfileSummary,
   BazaarProductRaw,
   BazaarItemV2,
+  BazaarMoversResponse,
   BazaarHistory,
-  BazaarHistoryV2,
   LowestBins,
   AuctionSearchResult,
   PlayerAuction,
@@ -22,7 +22,7 @@ import type {
 } from '@/types/api'
 
 // Health
-export const getHealth = () => apiGet<HealthResponse>('/v1/health')
+export const getHealth = () => apiGet('/v1/health', undefined, healthResponseSchema)
 
 // Player
 export const resolveUsername = (username: string) =>
@@ -33,7 +33,7 @@ export const resolveUuid = (uuid: string) =>
 
 // Profiles
 export const getProfiles = (playerUuid: string) =>
-  apiGet<ProfileSummary[]>(`/v2/skyblock/profiles/${encodeURIComponent(playerUuid)}`)
+  apiGet<ProfileSummary[]>(`/v1/skyblock/profiles/${encodeURIComponent(playerUuid)}`)
 
 export const getProfile = (profileUuid: string) =>
   apiGet<ProfileV2>(`/v2/skyblock/profile/${encodeURIComponent(profileUuid)}`)
@@ -44,6 +44,25 @@ export const getProfileV1 = (profileUuid: string) =>
 // Bazaar
 export const getBazaar = () => apiGet<Record<string, BazaarProductRaw>>('/v1/skyblock/bazaar')
 
+export const getBazaarV2 = (params?: Record<string, string | number | undefined>) => {
+  const clean: Record<string, string> = {}
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v != null && v !== '') clean[k] = String(v)
+    }
+  }
+  return apiGet('/v2/skyblock/bazaar', clean, bazaarBulkResponseSchema)
+}
+
+export const getBazaarCategories = () =>
+  apiGet<string[]>('/v2/skyblock/bazaar/categories')
+
+export const getBazaarMovers = (range?: '1h' | '24h', limit?: number) =>
+  apiGet<BazaarMoversResponse>('/v2/skyblock/bazaar/movers', {
+    ...(range && { range }),
+    ...(limit && { limit: String(limit) }),
+  })
+
 export const getBazaarItem = (itemId: string) =>
   apiGet<BazaarItemV2>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}`)
 
@@ -51,16 +70,32 @@ export const getBazaarHistory = (itemId: string) =>
   apiGet<BazaarHistory>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}/history`)
 
 export const getBazaarHistoryV2 = (itemId: string, range: string) =>
-  apiGet<BazaarHistoryV2>(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}/history`, { range })
+  apiGet(`/v2/skyblock/bazaar/${encodeURIComponent(itemId)}/history`, { range }, bazaarHistoryV2Schema)
 
 // Auctions
 export const getLowestBins = () => apiGet<LowestBins>('/v2/skyblock/auctions/lowest')
+
+export const getLowestBinsPaginated = (params?: Record<string, string | number | undefined>) => {
+  const clean: Record<string, string> = {}
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v != null && v !== '') clean[k] = String(v)
+    }
+  }
+  return apiGet<LowestBins>('/v2/skyblock/auctions/lowest', clean)
+}
 
 export const getLowestBinsByKey = () =>
   apiGet<Record<string, LowestBins>>('/v2/skyblock/auctions/lowest', { key_by: 'skyblock_id' })
 
 export const getLowestBinItem = (item: string) =>
   apiGet<LowestBins>(`/v2/skyblock/auctions/lowest/${encodeURIComponent(item)}`)
+
+export const getAuctionHistory = (item: string, range: string) =>
+  apiGet<import('@/types/api').AuctionHistoryV2>(
+    `/v2/skyblock/auctions/price-history/${encodeURIComponent(item)}`,
+    { range }
+  )
 
 export const searchAuctions = (term: string) =>
   apiGet<AuctionSearchResult[]>('/v2/skyblock/auctions/search', { search: term })

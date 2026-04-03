@@ -42,7 +42,8 @@ export interface HealthResponse {
 
 // Player
 export interface PlayerUuidResponse {
-  uuid: string
+  id: string
+  name?: string
 }
 
 export interface PlayerUsernameResponse {
@@ -52,7 +53,7 @@ export interface PlayerUsernameResponse {
 export interface SkillData {
   level: number
   xp: number
-  maxLevel: number
+  maxLevel?: number
   progress: number
   overflow?: number
 }
@@ -65,14 +66,17 @@ export interface SlayerData {
 
 export interface DungeonClass {
   level: number
-  xp: number
-  progress: number
+  xp?: number
+  progress?: number
 }
 
 export interface DungeonsData {
   catacombs_level: number
-  catacombs_xp: number
-  classes: Record<string, DungeonClass>
+  catacombs_xp?: number
+  classes?: Record<string, DungeonClass>
+  class_levels?: Record<string, number>
+  secrets_found?: number
+  selected_class?: string
   master_mode_completions?: Record<string, number>
 }
 
@@ -186,6 +190,48 @@ export interface BazaarHistoryV2 {
   datapoints: BazaarHistoryDatapoint[]
 }
 
+// Bazaar V2 Bulk
+export interface BazaarProductV2 {
+  item_id: string
+  display_name: string
+  category?: string
+  tier?: string
+  instant_buy_price: number
+  instant_sell_price: number
+  buy_volume: number
+  sell_volume: number
+  buy_orders: number
+  sell_orders: number
+  buy_moving_week: number
+  sell_moving_week: number
+  margin: number
+  margin_percent: number
+  tax_adjusted_margin: number
+}
+
+export interface BazaarBulkResponse {
+  items: BazaarProductV2[]
+  total: number
+  limit: number
+  offset: number
+}
+
+// Bazaar Movers
+export interface BazaarMover {
+  item_id: string
+  display_name: string
+  current_instant_buy: number
+  previous_instant_buy: number
+  change: number
+  change_percent: number
+}
+
+export interface BazaarMoversResponse {
+  gainers: BazaarMover[]
+  losers: BazaarMover[]
+  range: string
+}
+
 // Auctions
 export interface LowestBinItem {
   item_id: string
@@ -229,6 +275,35 @@ export interface EndedAuction {
   seller: string
   timestamp: number
   bin: boolean
+}
+
+// Auction Price History
+export interface AuctionHistoryDatapoint {
+  timestamp: number
+  lowest_bin: number
+  median_bin: number | null
+  listing_count: number
+  sale_count: number
+  avg_sale_price: number | null
+}
+
+export interface AuctionHistorySummary {
+  avg_lowest_bin: number
+  min_lowest_bin: number
+  max_lowest_bin: number
+  total_sales: number
+  avg_sale_price: number | null
+}
+
+export interface AuctionHistoryV2 {
+  item: string
+  skyblock_id: string
+  range: string
+  resolution: string
+  sparse: boolean
+  count: number
+  summary: AuctionHistorySummary | null
+  datapoints: AuctionHistoryDatapoint[]
 }
 
 // Items
@@ -333,6 +408,7 @@ export interface AppSettings {
   showChartAnnotations: boolean
   showStatsBar: boolean
   liveDataMode: 'off' | 'full' | 'extrapolated'
+  requestTimeout: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -346,4 +422,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showChartAnnotations: true,
   showStatsBar: true,
   liveDataMode: 'off',
+  requestTimeout: 15_000,
 }

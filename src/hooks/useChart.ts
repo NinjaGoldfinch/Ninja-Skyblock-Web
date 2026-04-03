@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createChart, CrosshairMode } from "lightweight-charts";
 import type { IChartApi, TickMarkType } from "lightweight-charts";
 
@@ -45,7 +45,7 @@ function getChartTheme() {
   const borderColor = isLight ? "#d8dae2" : "#1e2130";
 
   return {
-    layout: { background: { color: "transparent" }, textColor, fontFamily: "DM Sans", attributionLogo: false },
+    layout: { background: { color: "transparent" }, textColor, fontFamily: "Plus Jakarta Sans", attributionLogo: false },
     grid: { vertLines: { color: gridColor }, horzLines: { color: gridColorH } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor, tickMarkFormatter, rightOffset: 0, shiftVisibleRangeOnNewBar: true },
     rightPriceScale: { borderColor },
@@ -56,11 +56,12 @@ function getChartTheme() {
 
 /**
  * Creates a lightweight-charts instance, handles resize (throttled), and cleans up on unmount.
- * Returns refs to the container div and the chart API.
+ * Returns refs to the container div, the chart API, and a ready counter that changes when the chart is created.
  */
 export function useChart(options?: ChartOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const [chartReady, setChartReady] = useState(0);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -73,6 +74,7 @@ export function useChart(options?: ChartOptions) {
     });
 
     chartRef.current = chart;
+    setChartReady((c) => c + 1);
 
     // Throttle resize to prevent excessive redraws
     let resizeRaf = 0;
@@ -94,5 +96,5 @@ export function useChart(options?: ChartOptions) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { containerRef, chartRef };
+  return { containerRef, chartRef, chartReady };
 }

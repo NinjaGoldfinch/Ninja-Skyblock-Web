@@ -14,9 +14,12 @@ describe('computePriceStats', () => {
     expect(computePriceStats([])).toBeNull()
   })
 
-  it('returns null when all prices are zero', () => {
+  it('returns stats when all prices are zero (zero is valid)', () => {
     const points = makePoints([[1000, 0, 0], [2000, 0, 0]])
-    expect(computePriceStats(points)).toBeNull()
+    const stats = computePriceStats(points)!
+    expect(stats).not.toBeNull()
+    expect(stats.highBuy).toBe(0)
+    expect(stats.lowBuy).toBe(0)
   })
 
   it('computes high/low/avg for buy prices', () => {
@@ -90,7 +93,7 @@ describe('computePriceStats', () => {
     expect(stats.pctChangeBuy).toBe(0)
   })
 
-  it('skips zero prices in aggregation', () => {
+  it('includes zero prices in aggregation (zero = no orders)', () => {
     const points = makePoints([
       [1000, 100, 50],
       [2000, 0, 60],
@@ -98,7 +101,9 @@ describe('computePriceStats', () => {
     ])
     const stats = computePriceStats(points)!
 
-    expect(stats.avgBuy).toBe(110) // (100 + 120) / 2, skipping 0
-    expect(stats.avgSell).toBe(55) // (50 + 60) / 2, skipping 0
+    expect(stats.avgBuy).toBeCloseTo((100 + 0 + 120) / 3)
+    expect(stats.avgSell).toBeCloseTo((50 + 60 + 0) / 3)
+    expect(stats.lowBuy).toBe(0)
+    expect(stats.lowSell).toBe(0)
   })
 })

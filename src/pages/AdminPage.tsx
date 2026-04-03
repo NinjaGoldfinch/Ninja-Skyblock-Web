@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ShieldAlert, Plus, Trash2, Key } from "lucide-react";
+import { Plus, Trash2, Key } from "lucide-react";
 import {
   getApiKeys,
   generateApiKey,
@@ -9,7 +9,6 @@ import {
   addWatchedPlayer,
   removeWatchedPlayer,
 } from "@/api/endpoints";
-import { getSettings } from "@/lib/settings";
 import { DataCard } from "@/components/ui/DataCard";
 import { PlayerHead } from "@/components/ui/PlayerHead";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -305,34 +304,6 @@ const adminTabs: { key: AdminTab; label: string }[] = [
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>("api-keys");
-  const settings = getSettings();
-
-  const isAuthenticated =
-    settings.apiKey || settings.hmacSecret || settings.authMode === "bypass";
-
-  if (!isAuthenticated) {
-    return (
-      <div className="animate-fade-in">
-        <h1 className="text-4xl font-display text-gradient-coin font-bold mb-6">Admin</h1>
-        <div className="flex items-center gap-4 glass rounded-2xl border border-yellow-500/20 p-6">
-          <div className="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
-            <ShieldAlert className="w-6 h-6 text-yellow-400" />
-          </div>
-          <div>
-            <p className="text-body font-medium">
-              Configure authentication in Settings to access admin features.
-            </p>
-            <Link
-              to="/settings"
-              className="text-coin hover:text-coin-light text-sm mt-1.5 inline-block font-medium transition-colors"
-            >
-              Go to Settings
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 animate-fade-in">

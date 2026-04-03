@@ -1,4 +1,4 @@
-import { getApiBaseUrl } from '@/lib/settings'
+import { getApiBaseUrl, getSettings } from '@/lib/settings'
 
 export type SseEvent = Record<string, unknown> & { timestamp?: number; type?: string }
 type EventCallback = (event: SseEvent) => void
@@ -16,6 +16,11 @@ class SseClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private reconnectDelay = 1000
   private readonly maxReconnectDelay = 30000
+  private readonly path: string
+
+  constructor(path: string) {
+    this.path = path
+  }
 
   get state(): SseState {
     return this._state
@@ -36,14 +41,19 @@ class SseClient {
     this._intentionalClose = false
 
     const base = getApiBaseUrl()
-    const url = `${base}/v1/events/bazaar/stream`
+    const url = new URL(`${base}${this.path}`)
+
+    const settings = getSettings()
+    if (settings.authMode === 'apikey' && settings.apiKey) {
+      url.searchParams.set('api_key', settings.apiKey)
+    }
 
     this.setState('connecting')
 
-    this.source = new EventSource(url)
+    this.source = new EventSource(url.toString())
 
     this.source.onopen = () => {
-      this.reconnectDelay = 1000 // reset backoff on successful connect
+      this.reconnectDelay = 1000
       this.setState('connected')
     }
 
@@ -60,12 +70,10 @@ class SseClient {
       if (this._intentionalClose) return
 
       if (this.source?.readyState === EventSource.CLOSED) {
-        // Fully closed — clean up and schedule reconnect
         this.source = null
         this.setState('reconnecting', 'Connection lost — reconnecting...')
         this.scheduleReconnect()
       } else {
-        // Browser is auto-reconnecting (readyState CONNECTING)
         this.setState('connecting')
       }
     }
@@ -103,4 +111,5 @@ class SseClient {
   }
 }
 
-export const sseClient = new SseClient()
+export const sseClient = new SseClient('/v1/events/bazaar/stream')
+export const auctionSseClient = new SseClient('/v1/events/auctions/stream')

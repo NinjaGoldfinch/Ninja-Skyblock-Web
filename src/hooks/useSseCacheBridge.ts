@@ -4,6 +4,7 @@ import { sseClient } from '@/api/sse'
 import { getSettings } from '@/lib/settings'
 import {
   patchBazaarListing,
+  patchBazaarV2Listing,
   patchBazaarItem,
   appendHistoryFromEvent,
   extendAllActiveHistories,
@@ -102,6 +103,7 @@ export function useSseCacheBridge() {
         // Patch listing + item caches
         for (const fe of fieldEvents) {
           patchBazaarListing(queryClient, fe)
+          patchBazaarV2Listing(queryClient, fe)
           patchBazaarItem(queryClient, fe)
         }
 

@@ -31,18 +31,15 @@ export function computePriceStats(points: NormalizedPricePoint[]): PriceStats | 
   let sumBuy = 0, sumSell = 0, countBuy = 0, countSell = 0;
 
   for (const p of points) {
-    if (p.buyPrice > 0) {
-      sumBuy += p.buyPrice;
-      countBuy++;
-      if (p.buyPrice > highBuy) { highBuy = p.buyPrice; highBuyTs = p.timestamp; }
-      if (p.buyPrice < lowBuy) { lowBuy = p.buyPrice; lowBuyTs = p.timestamp; }
-    }
-    if (p.sellPrice > 0) {
-      sumSell += p.sellPrice;
-      countSell++;
-      if (p.sellPrice > highSell) { highSell = p.sellPrice; highSellTs = p.timestamp; }
-      if (p.sellPrice < lowSell) { lowSell = p.sellPrice; lowSellTs = p.timestamp; }
-    }
+    sumBuy += p.buyPrice;
+    countBuy++;
+    if (p.buyPrice > highBuy) { highBuy = p.buyPrice; highBuyTs = p.timestamp; }
+    if (p.buyPrice < lowBuy) { lowBuy = p.buyPrice; lowBuyTs = p.timestamp; }
+
+    sumSell += p.sellPrice;
+    countSell++;
+    if (p.sellPrice > highSell) { highSell = p.sellPrice; highSellTs = p.timestamp; }
+    if (p.sellPrice < lowSell) { lowSell = p.sellPrice; lowSellTs = p.timestamp; }
   }
 
   if (countBuy === 0 && countSell === 0) return null;

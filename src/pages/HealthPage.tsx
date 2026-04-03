@@ -31,7 +31,7 @@ export default function HealthPage() {
     refetchInterval: 15_000,
   });
 
-  const data: HealthResponse | undefined = resp?.data;
+  const data = resp?.data as HealthResponse | undefined;
   const meta = resp?.meta;
 
   if (isLoading) {

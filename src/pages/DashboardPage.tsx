@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, BarChart3, Gavel, Eye, Key, TrendingUp } from "lucide-react";
+import { Search, BarChart3, Gavel, Eye, Key, TrendingUp, TrendingDown } from "lucide-react";
 
 import { DataCard } from "@/components/ui/DataCard";
 import { CardSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { getHealth, getBazaar, getLowestBins, getWatchedPlayers, getApiKeys } from "@/api/endpoints";
+import { ItemIcon } from "@/components/ui/ItemIcon";
+import { PriceDisplay } from "@/components/ui/PriceDisplay";
+import { getHealth, getBazaar, getBazaarMovers, getLowestBins, getWatchedPlayers, getApiKeys } from "@/api/endpoints";
 import { formatNumber } from "@/lib/format";
+import type { BazaarMover } from "@/types/api";
 
 function isUUID(input: string): boolean {
   const stripped = input.replace(/-/g, "");
@@ -55,7 +58,14 @@ export default function DashboardPage() {
     queryFn: () => getApiKeys(),
     refetchInterval: 60_000,
     retry: false,
-    enabled: false, // endpoint doesn't exist yet
+    enabled: false,
+  });
+
+  const [moverRange, setMoverRange] = useState<'1h' | '24h'>('1h');
+  const { data: moversResp, isLoading: moversLoading } = useQuery({
+    queryKey: ["bazaar-movers", moverRange],
+    queryFn: () => getBazaarMovers(moverRange, 5),
+    refetchInterval: 60_000,
   });
 
   const bazaarData = bazaarResp?.data as Record<string, unknown> | undefined;
@@ -180,14 +190,31 @@ export default function DashboardPage() {
           subtitle={keysCount === null ? "Not available" : undefined}
         />
 
-        {/* Recent Bazaar Movers */}
-        <DataCard title="Top Movers" className="flex flex-col">
-          <div className="flex-1 flex items-center justify-center py-6">
-            <div className="text-center">
-              <TrendingUp className="w-8 h-8 text-muted/30 mx-auto mb-2" />
-              <p className="text-muted text-sm">Coming soon</p>
+        {/* Top Movers */}
+        <DataCard className="lg:col-span-2 flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-gradient-coin text-sm uppercase tracking-[0.12em] font-semibold">
+              Top Movers
+            </h3>
+            <div className="flex items-center gap-1 border border-dungeon/40 rounded-lg p-0.5">
+              {(['1h', '24h'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setMoverRange(r)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium transition-all ${
+                    moverRange === r ? "bg-coin/10 text-coin" : "text-muted hover:text-body"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
           </div>
+          {moversLoading ? (
+            <CardSkeleton />
+          ) : (
+            <TopMoversContent movers={moversResp?.data as unknown as { gainers?: BazaarMover[]; losers?: BazaarMover[] } | undefined} />
+          )}
         </DataCard>
       </div>
     </div>
@@ -221,5 +248,64 @@ function StatCard({
       {loading && !subtitle && <p className="text-muted/50 text-xs mt-1">Loading...</p>}
       {subtitle && <p className="text-muted/50 text-xs mt-1">{subtitle}</p>}
     </DataCard>
+  );
+}
+
+function TopMoversContent({ movers }: { movers?: { gainers?: BazaarMover[]; losers?: BazaarMover[] } }) {
+  const gainers = movers?.gainers ?? [];
+  const losers = movers?.losers ?? [];
+
+  if (gainers.length === 0 && losers.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center py-6">
+        <p className="text-muted text-sm">No mover data available</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Gainers */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium uppercase tracking-wider mb-2">
+          <TrendingUp size={12} />
+          Gainers
+        </div>
+        {gainers.map((m) => (
+          <MoverRow key={m.item_id} mover={m} type="gainer" />
+        ))}
+      </div>
+      {/* Losers */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 text-xs text-damage font-medium uppercase tracking-wider mb-2">
+          <TrendingDown size={12} />
+          Losers
+        </div>
+        {losers.map((m) => (
+          <MoverRow key={m.item_id} mover={m} type="loser" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MoverRow({ mover: m, type }: { mover: BazaarMover; type: "gainer" | "loser" }) {
+  const color = type === "gainer" ? "text-green-400" : "text-damage";
+  return (
+    <Link
+      to={`/bazaar/${m.item_id}`}
+      className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-coin/5 transition-colors group"
+    >
+      <ItemIcon itemId={m.item_id} size={24} />
+      <span className="text-body-light text-sm font-medium flex-1 min-w-0 truncate group-hover:text-coin transition-colors">
+        {m.display_name}
+      </span>
+      <div className="text-right shrink-0">
+        <PriceDisplay amount={m.current_instant_buy} size="sm" />
+        <p className={`text-xs font-mono font-medium ${color}`}>
+          {m.change_percent >= 0 ? "+" : ""}{m.change_percent.toFixed(1)}%
+        </p>
+      </div>
+    </Link>
   );
 }

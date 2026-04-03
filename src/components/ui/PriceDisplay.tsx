@@ -14,9 +14,9 @@ export function PriceDisplay({ amount, className = '', size = 'md' }: PriceDispl
   }
 
   return (
-    <span className={`font-mono text-gold inline-flex items-center gap-1.5 ${sizeClasses[size]} ${className}`}>
-      <span className="text-xs">&#x1FA99;</span>
-      {formatCoins(amount)}
+    <span className={`font-mono text-gradient-gold inline-flex items-center gap-1.5 ${sizeClasses[size]} ${className}`}>
+      <span className="text-gold text-xs opacity-70">&#x1FA99;</span>
+      <span className="text-gold">{formatCoins(amount)}</span>
     </span>
   )
 }

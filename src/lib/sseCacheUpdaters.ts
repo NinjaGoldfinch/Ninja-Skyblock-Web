@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query'
-import type { ApiResponse, BazaarProductRaw, BazaarSseEvent, BazaarHistoryV2, BazaarHistoryDatapoint } from '@/types/api'
+import type { ApiResponse, BazaarProductRaw, BazaarProductV2, BazaarBulkResponse, BazaarSseEvent, BazaarHistoryV2, BazaarHistoryDatapoint } from '@/types/api'
 
 // --- Bazaar listing cache (BazaarPage) ---
 
@@ -63,6 +63,63 @@ export function patchBazaarListing(queryClient: QueryClient, event: BazaarSseEve
       }
     },
   )
+}
+
+// --- Bazaar V2 bulk listing cache (BazaarPage with v2 endpoint) ---
+
+const BZ_TAX_RATE = 0.01125
+
+const V2_FIELD_MAP: Record<string, keyof BazaarProductV2> = {
+  instant_buy_price: 'instant_buy_price',
+  instant_sell_price: 'instant_sell_price',
+  buy_volume: 'buy_volume',
+  sell_volume: 'sell_volume',
+}
+
+export function patchBazaarV2Listing(queryClient: QueryClient, event: BazaarSseEvent) {
+  if (!event.item_id || !event.field) return
+  const numVal = typeof event.new_value === 'number' ? event.new_value : Number(event.new_value)
+  if (isNaN(numVal)) return
+
+  const v2Field = V2_FIELD_MAP[event.field]
+  if (!v2Field) return
+
+  // Patch all active bazaar-v2 queries (any combination of search/sort/page params)
+  const queries = queryClient.getQueriesData<ApiResponse<BazaarBulkResponse>>({
+    queryKey: ['bazaar-v2'],
+  })
+
+  for (const [queryKey, old] of queries) {
+    // API returns `products` array
+    const oldData = old?.data as unknown as { products?: BazaarProductV2[] } | undefined
+    const productList = oldData?.products
+    if (!productList) continue
+
+    const idx = productList.findIndex((p) => p.item_id === event.item_id)
+    if (idx === -1) continue
+
+    const original = productList[idx]!
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updated = { ...original } as any
+    updated[v2Field] = numVal
+
+    // Recompute margin fields if price changed
+    if (event.field === 'instant_buy_price' || event.field === 'instant_sell_price') {
+      updated.margin = updated.instant_sell_price - updated.instant_buy_price
+      updated.margin_percent = updated.instant_buy_price > 0
+        ? (updated.margin / updated.instant_buy_price) * 100
+        : 0
+      updated.tax_adjusted_margin = updated.margin - (updated.instant_sell_price * BZ_TAX_RATE)
+    }
+
+    const newProducts = [...productList]
+    newProducts[idx] = updated as BazaarProductV2
+
+    queryClient.setQueryData(queryKey, {
+      ...old,
+      data: { ...oldData, products: newProducts },
+    })
+  }
 }
 
 // --- Bazaar item cache (BazaarItemPage) ---

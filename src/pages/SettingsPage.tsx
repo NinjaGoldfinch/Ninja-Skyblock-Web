@@ -1,11 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
-import { Eye, EyeOff, Save } from "lucide-react";
+import { Eye, EyeOff, Save, Bell, Trash2 } from "lucide-react";
 import { saveSettings, getSettings } from "@/lib/settings";
 import { applyTheme } from "@/lib/theme";
+import { usePriceAlerts } from "@/hooks/usePriceAlerts";
 import type { AppSettings } from "@/types/api";
 
 export default function SettingsPage() {
+  const location = useLocation();
+
+  useEffect(() => {
+    if ((location.state as { authRequired?: boolean } | null)?.authRequired) {
+      toast.info("Configure authentication to access admin features.");
+      // Clear the state so the toast doesn't re-show on re-renders
+      window.history.replaceState({}, "");
+    }
+  }, [location.state]);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = getSettings();
     return {
@@ -19,6 +30,7 @@ export default function SettingsPage() {
       showChartAnnotations: saved.showChartAnnotations ?? true,
       showStatsBar: saved.showStatsBar ?? true,
       liveDataMode: saved.liveDataMode ?? 'off',
+      requestTimeout: saved.requestTimeout ?? 15_000,
     };
   });
 
@@ -139,6 +151,24 @@ export default function SettingsPage() {
           />
         </div>
 
+        {/* Request Timeout */}
+        <div className="glass rounded-2xl border border-dungeon/40 p-6 space-y-3">
+          <label className="block font-display text-sm text-gradient-coin font-semibold">
+            Request Timeout (ms)
+          </label>
+          <input
+            type="number"
+            min={1000}
+            step={1000}
+            value={settings.requestTimeout}
+            onChange={(e) =>
+              update("requestTimeout", Number(e.target.value))
+            }
+            className="w-36 border border-dungeon/50 bg-void/50 px-4 py-3 font-mono text-body placeholder-muted rounded-xl focus:border-coin/50 focus:outline-none"
+          />
+          <p className="text-muted text-xs">How long to wait for API responses before timing out.</p>
+        </div>
+
         {/* Theme */}
         <div className="glass rounded-2xl border border-dungeon/40 p-6 space-y-4">
           <span className="block font-display text-sm text-gradient-coin font-semibold">
@@ -215,6 +245,9 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Price Alerts */}
+        <PriceAlertsSection />
+
         {/* Save Button */}
         <button
           onClick={handleSave}
@@ -224,6 +257,69 @@ export default function SettingsPage() {
           Save Settings
         </button>
       </div>
+    </div>
+  );
+}
+
+function PriceAlertsSection() {
+  const { alerts, remove, toggle } = usePriceAlerts();
+
+  return (
+    <div className="glass rounded-2xl border border-dungeon/40 p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <Bell size={18} className="text-coin" />
+        <h2 className="font-display text-gradient-coin text-lg font-semibold tracking-wide">Price Alerts</h2>
+        {alerts.length > 0 && (
+          <span className="text-muted text-xs font-mono bg-dungeon/30 px-2 py-0.5 rounded-md">
+            {alerts.filter((a) => a.enabled).length} active
+          </span>
+        )}
+      </div>
+
+      {alerts.length === 0 ? (
+        <p className="text-muted text-sm">No price alerts set. Visit a bazaar item page and click the bell icon to create one.</p>
+      ) : (
+        <div className="bg-void/30 border border-dungeon/30 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-dungeon/30 text-muted text-xs uppercase tracking-wider">
+                <th className="text-left py-2.5 px-4 w-8"></th>
+                <th className="text-left py-2.5 px-4">Item</th>
+                <th className="text-left py-2.5 px-4">Condition</th>
+                <th className="text-right py-2.5 px-4">Threshold</th>
+                <th className="text-right py-2.5 px-4 w-8"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {alerts.map((a) => (
+                <tr key={a.id} className="border-b border-dungeon/20 hover:bg-coin/3 transition-colors">
+                  <td className="py-2 px-4">
+                    <button
+                      onClick={() => toggle(a.id)}
+                      className={`w-3 h-3 rounded-full border-2 transition-colors ${
+                        a.enabled ? "bg-green-400 border-green-400" : "border-muted/40"
+                      }`}
+                    />
+                  </td>
+                  <td className="py-2 px-4 text-body-light font-medium">{a.itemName}</td>
+                  <td className="py-2 px-4 text-muted font-mono text-xs">
+                    {a.field === 'instant_buy_price' ? 'Buy' : 'Sell'}{' '}
+                    {a.condition === 'above' ? '≥' : '≤'}
+                  </td>
+                  <td className="py-2 px-4 text-right font-mono text-body">
+                    {a.threshold.toLocaleString()}
+                  </td>
+                  <td className="py-2 px-4 text-right">
+                    <button onClick={() => remove(a.id)} className="text-muted/40 hover:text-damage transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
